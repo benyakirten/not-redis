@@ -1,14 +1,8 @@
 use tokio::sync::broadcast;
 
-mod app;
-mod commands;
-mod data;
-mod encoding;
-mod request;
-mod server;
-mod stream;
-mod transmission;
-mod utils;
+use not_redis::app;
+use not_redis::server;
+use not_redis::transmission;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {

@@ -13,6 +13,7 @@ use tokio::time::{sleep, Instant};
 
 use crate::{data, encoding, request, stream};
 
+#[derive(Clone)]
 pub struct Address {
     host: String,
     port: u16,
@@ -27,11 +28,21 @@ impl Address {
     pub fn name(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
+
+    pub fn new(host: String, port: u16) -> Self {
+        Address { host, port }
+    }
 }
 
 pub struct Config {
     pub dir: Option<String>,
     pub db_file_name: Option<String>,
+}
+
+impl Config {
+    pub fn new(dir: Option<String>, db_file_name: Option<String>) -> Self {
+        Config { dir, db_file_name }
+    }
 }
 
 pub enum ServerRole {
@@ -54,7 +65,27 @@ pub struct Server {
     pub replication: Replication,
 }
 
+impl Server {
+    pub fn new(
+        config: Config,
+        role: ServerRole,
+        address: Address,
+        replication: Replication,
+    ) -> Self {
+        Server {
+            config,
+            role,
+            address,
+            replication,
+        }
+    }
+}
+
 impl RedisServer {
+    pub fn new(settings: Server) -> Self {
+        RedisServer(Arc::new(RwLock::new(settings)))
+    }
+
     pub async fn from_args() -> Result<(data::Database, Self), anyhow::Error> {
         let args: Vec<String> = env::args().collect();
 
@@ -80,7 +111,7 @@ impl RedisServer {
             config,
         };
 
-        let server = RedisServer(Arc::new(RwLock::new(settings)));
+        let server = RedisServer::new(settings);
         Ok((database, server))
     }
 
@@ -373,7 +404,7 @@ async fn sync_to_master(
     Ok((replication, role))
 }
 
-fn generate_random_sha1_hex() -> String {
+pub fn generate_random_sha1_hex() -> String {
     let mut rng = rand::thread_rng();
     let mut sha1 = Sha1::new();
 
