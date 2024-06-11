@@ -1,10 +1,11 @@
 use std::sync::Mutex;
 
-use not_redis::app;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
+use tokio::time;
 
+use not_redis::app;
 use not_redis::server::{
     generate_random_sha1_hex, Address, Config, RedisServer, Replication, Server, ServerRole,
 };
@@ -13,12 +14,14 @@ use not_redis::data::Database;
 use not_redis::transmission::Transmission;
 
 static PORT: Mutex<u16> = Mutex::new(6379);
+const TIMEOUT: time::Duration = time::Duration::from_millis(500);
 
 pub struct TestApp {
     pub database: Database,
     pub redis_server: RedisServer,
     pub address: Address,
     pub transmitter: broadcast::Sender<Transmission>,
+    join_handle: tokio::task::JoinHandle<()>,
 }
 
 pub async fn setup() -> TestApp {
@@ -40,6 +43,17 @@ pub async fn setup() -> TestApp {
     let settings = Server::new(config, role, address.clone(), replication);
     let redis_server = RedisServer::new(settings);
 
+    let addr = address.name().clone();
+    let db = database.clone();
+    let rs = redis_server.clone();
+    let transmitter = tx.clone();
+
+    let join_handle = tokio::spawn(async move {
+        app::run(&addr, db, rs, transmitter)
+            .await
+            .expect("Failed to run app");
+    });
+
     *PORT.lock().unwrap() = port.checked_add(1).expect("Port overflow");
 
     let test_app = TestApp {
@@ -47,20 +61,16 @@ pub async fn setup() -> TestApp {
         redis_server,
         address,
         transmitter: tx,
+        join_handle,
     };
 
-    let address = test_app.address.name().clone();
-    let database = test_app.database.clone();
-    let redis_server = test_app.redis_server.clone();
-    let transmitter = test_app.transmitter.clone();
-
-    tokio::spawn(async move {
-        app::run(&address, database, redis_server, transmitter)
-            .await
-            .expect("Failed to run app");
-    });
-
     test_app
+}
+
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        self.join_handle.abort();
+    }
 }
 
 async fn get_available_port() -> u16 {
@@ -79,7 +89,18 @@ async fn port_available(port: u16) -> bool {
 }
 
 pub async fn send_message(address: &str, message: &str, buffer_size: usize) -> (Vec<u8>, usize) {
-    let mut socket = TcpStream::connect(address).await.unwrap();
+    println!("Connecting to {}", address);
+    let socket = TcpStream::connect(address).await;
+    match socket {
+        Ok(_) => {}
+        Err(e) => {
+            println!("Failed to connect to {}: {}", address, e);
+            time::sleep(TIMEOUT).await;
+            return Box::pin(send_message(address, message, buffer_size)).await;
+        }
+    };
+
+    let mut socket = socket.unwrap();
     socket.write_all(message.as_bytes()).await.unwrap();
 
     let mut buffer = vec![0; buffer_size];
