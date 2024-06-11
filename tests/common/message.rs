@@ -5,7 +5,6 @@ use tokio::time;
 const TIMEOUT: time::Duration = time::Duration::from_millis(500);
 
 pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> (Vec<u8>, usize) {
-    println!("Connecting to {}", address);
     let socket = TcpStream::connect(address).await;
     match socket {
         Ok(_) => {}
