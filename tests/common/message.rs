@@ -4,7 +4,7 @@ use tokio::time;
 
 const TIMEOUT: time::Duration = time::Duration::from_millis(500);
 
-pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> (Vec<u8>, usize) {
+pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> String {
     let socket = TcpStream::connect(address).await;
     match socket {
         Ok(_) => {}
@@ -21,7 +21,7 @@ pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> 
     let mut buffer = vec![0; buffer_size];
     let read_len = socket.read(&mut buffer).await.unwrap();
 
-    (buffer, read_len)
+    String::from_utf8(buffer[..read_len].to_vec()).unwrap()
 }
 
 pub fn encode_string(s: &str) -> Vec<u8> {
@@ -31,12 +31,17 @@ pub fn encode_string(s: &str) -> Vec<u8> {
 pub fn encode_array(items: Vec<&str>) -> Vec<u8> {
     let mut output = format!("*{}\r\n", items.len());
     for item in items {
-        let processed = &encode_simple_string(item);
+        let processed = &encode_array_string_item(item);
         output.push_str(processed);
     }
     output.into()
 }
 
-pub fn encode_simple_string(item: &str) -> String {
+pub fn encode_array_string_item(item: &str) -> String {
     format!("${}\r\n{}\r\n", item.len(), item)
+}
+
+#[allow(dead_code)]
+pub fn encode_simple_string(item: &str) -> String {
+    format!("+{}\r\n", item)
 }
