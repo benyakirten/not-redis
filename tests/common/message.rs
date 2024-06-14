@@ -45,3 +45,8 @@ pub fn encode_array_string_item(item: &str) -> String {
 pub fn encode_simple_string(item: &str) -> String {
     format!("+{}\r\n", item)
 }
+
+#[allow(dead_code)]
+pub fn empty_string() -> String {
+    "$-1\r\n".to_string()
+}
