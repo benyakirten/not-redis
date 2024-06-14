@@ -25,18 +25,18 @@ pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> 
 }
 
 pub fn encode_string(s: &str) -> Vec<u8> {
-    encode_array(vec![s])
+    encode_array(s.split_whitespace().collect())
 }
 
 pub fn encode_array(items: Vec<&str>) -> Vec<u8> {
     let mut output = format!("*{}\r\n", items.len());
     for item in items {
-        let processed = &encode_array_item(item);
+        let processed = &encode_simple_string(item);
         output.push_str(processed);
     }
     output.into()
 }
 
-fn encode_array_item(item: &str) -> String {
+pub fn encode_simple_string(item: &str) -> String {
     format!("${}\r\n{}\r\n", item.len(), item)
 }
