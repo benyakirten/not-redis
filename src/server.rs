@@ -286,7 +286,7 @@ fn parse_u16_port(s: &str) -> Result<u16, anyhow::Error> {
     s.parse::<u16>().context("Parsing port as u16")
 }
 
-async fn sync_to_master(
+pub async fn sync_to_master(
     master_address: Address,
     server_address: &Address,
     database: data::Database,

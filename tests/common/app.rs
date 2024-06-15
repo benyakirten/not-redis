@@ -1,19 +1,22 @@
 use std::fmt::Debug;
 use std::sync::Mutex;
 
+use rand::Rng;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::time;
 
 use not_redis::app;
 use not_redis::server::{
-    generate_random_sha1_hex, Address, Config, RedisServer, Replication, Server, ServerRole,
+    generate_random_sha1_hex, sync_to_master, Address, Config, RedisServer, Replication, Server,
+    ServerRole,
 };
 
 use not_redis::data::Database;
 use not_redis::transmission::Transmission;
 
-static PORT: Mutex<u16> = Mutex::new(6379);
+const MIN_PORT: u16 = 2000;
+const MAX_PORT: u16 = u16::MAX;
 const TIMEOUT: time::Duration = time::Duration::from_millis(500);
 
 pub struct TestApp {
@@ -26,7 +29,7 @@ pub struct TestApp {
 
 enum TestAppRole {
     Master,
-    Slave(Replication),
+    Slave(Address),
 }
 
 impl TestApp {
@@ -34,22 +37,25 @@ impl TestApp {
         TestApp::new(TestAppRole::Master).await
     }
 
-    pub async fn slave(replication: Replication) -> TestApp {
-        TestApp::new(TestAppRole::Slave(replication)).await
+    pub async fn slave(address: Address) -> TestApp {
+        TestApp::new(TestAppRole::Slave(address)).await
     }
 
     async fn new(role: TestAppRole) -> TestApp {
         let (tx, _) = broadcast::channel::<Transmission>(100);
 
         let database = Database::new();
-
-        let (role, replication) = match role {
-            TestAppRole::Master => master_server_role(),
-            TestAppRole::Slave(replication) => (ServerRole::Slave, replication),
-        };
-
         let port = get_available_port().await;
         let address = Address::new("127.0.0.1".into(), port);
+
+        let (replication, role) = match role {
+            TestAppRole::Master => master_server_role(),
+            TestAppRole::Slave(master_address) => {
+                sync_to_master(master_address, &address, database.clone())
+                    .await
+                    .expect("Failed to sync to master")
+            }
+        };
 
         let config = Config::new(None, None);
 
@@ -68,8 +74,6 @@ impl TestApp {
         });
 
         time::sleep(TIMEOUT).await;
-
-        *PORT.lock().unwrap() = port.checked_add(1).expect("Port overflow");
 
         println!("TestApp started on {}", address.name());
 
@@ -92,25 +96,34 @@ impl Drop for TestApp {
 }
 
 async fn get_available_port() -> u16 {
-    let port = *PORT.lock().unwrap();
-    for i in port..u16::MAX {
-        if port_available(i + 1).await {
-            return i + 1;
+    // 100 Attempts to get an available port seems generous.
+    for _ in 0..100 {
+        if let Some(port) = find_random_available_port().await {
+            return port;
         }
     }
 
-    panic!("No available port found between {} and {}", port, u16::MAX);
+    panic!("No available port found");
 }
 
-async fn port_available(port: u16) -> bool {
-    TcpListener::bind(("127.0.0.1", port)).await.is_ok()
+async fn find_random_available_port() -> Option<u16> {
+    let port = get_random_port();
+    match TcpListener::bind(("127.0.0.1", port)).await {
+        Ok(_) => Some(port),
+        Err(_) => None,
+    }
 }
 
-pub fn master_server_role() -> (ServerRole, Replication) {
-    let role = ServerRole::Master(vec![], 0, 0);
+pub fn master_server_role() -> (Replication, ServerRole) {
     let replication = Replication {
         id: generate_random_sha1_hex(),
         offset: 0,
     };
-    (role, replication)
+    let role = ServerRole::Master(vec![], 0, 0);
+    (replication, role)
+}
+
+fn get_random_port() -> u16 {
+    let mut rng = rand::thread_rng();
+    rng.gen_range(MIN_PORT..MAX_PORT)
 }
