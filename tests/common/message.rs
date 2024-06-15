@@ -4,14 +4,30 @@ use tokio::time;
 
 const TIMEOUT: time::Duration = time::Duration::from_millis(500);
 
-pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> String {
+async fn inner_send_message(
+    address: &str,
+    message: &[u8],
+    buffer_size: usize,
+    attempt_no: u8,
+    max_attempts: u8,
+) -> String {
     let socket = TcpStream::connect(address).await;
     match socket {
         Ok(_) => {}
         Err(e) => {
+            if attempt_no >= max_attempts {
+                panic!("Exceeded max attempts to connect to {}: {}", address, e);
+            }
             println!("Failed to connect to {}: {}", address, e);
             time::sleep(TIMEOUT).await;
-            return Box::pin(send_message(address, message, buffer_size)).await;
+            return Box::pin(inner_send_message(
+                address,
+                message,
+                buffer_size,
+                attempt_no + 1,
+                max_attempts,
+            ))
+            .await;
         }
     };
 
@@ -22,6 +38,10 @@ pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> 
     let read_len = socket.read(&mut buffer).await.unwrap();
 
     String::from_utf8(buffer[..read_len].to_vec()).unwrap()
+}
+
+pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> String {
+    inner_send_message(address, message, buffer_size, 0, 5).await
 }
 
 pub fn encode_string(s: &str) -> Vec<u8> {

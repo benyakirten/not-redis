@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::sync::Mutex;
 
 use tokio::net::TcpListener;
@@ -69,6 +70,8 @@ impl TestApp {
         time::sleep(TIMEOUT).await;
 
         *PORT.lock().unwrap() = port.checked_add(1).expect("Port overflow");
+
+        println!("TestApp started on {}", address.name());
 
         let test_app = TestApp {
             database,
