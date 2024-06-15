@@ -299,6 +299,8 @@ fn parse_config(body: Vec<String>) -> Result<Command, anyhow::Error> {
 }
 
 fn parse_keys(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    // TODO: Add handling for searching
+    // TODO: Add better error handling
     let key_group = body
         .first()
         .ok_or_else(|| anyhow::anyhow!("keys must specify a command"))?;

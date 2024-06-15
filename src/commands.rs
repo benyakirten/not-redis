@@ -146,6 +146,7 @@ pub fn get_keys(
     database: &data::Database,
     _key_group: String,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    // TODO: Handle empty key group
     let keys = database.keys()?;
     let keys: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
     let response = encoding::encode_array(keys.as_slice()).as_bytes().to_vec();
