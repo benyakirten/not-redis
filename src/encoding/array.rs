@@ -143,7 +143,6 @@ mod tests {
             "ten",
             "",
         ];
-        println!("{:?}", got_items);
 
         assert_eq!(got_items, want_items);
     }

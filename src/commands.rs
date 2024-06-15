@@ -36,6 +36,7 @@ pub fn get_value(database: &data::Database, key: String) -> Result<Vec<Vec<u8>>,
     }
     .as_bytes()
     .to_vec();
+
     let response = vec![response];
 
     Ok(response)
@@ -129,6 +130,7 @@ pub async fn view_config(
                 request::ConfigKey::Dir => read.config.dir.clone(),
                 request::ConfigKey::Dbfilename => read.config.db_file_name.clone(),
             }
+            // TODO: Add a proper fallback/
             .unwrap_or_else(|| String::from(""));
 
             (key.to_string(), config_option)

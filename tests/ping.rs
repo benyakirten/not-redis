@@ -8,6 +8,6 @@ async fn test_ping() {
     let address = test_app.address.name();
 
     let message = encode_string("PING");
-    let resp = send_message(&address, &message, 512).await;
+    let resp = send_message(&address, &message, ).await;
     assert_eq!(resp, "+PONG\r\n");
 }

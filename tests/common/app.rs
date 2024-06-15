@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rand::Rng;
@@ -33,18 +34,30 @@ enum TestAppRole {
 }
 
 impl TestApp {
+    pub async fn with_config(config: Config) -> TestApp {
+        TestApp::new(TestAppRole::Master, Some(config)).await
+    }
+
     pub async fn master() -> TestApp {
-        TestApp::new(TestAppRole::Master).await
+        TestApp::new(TestAppRole::Master, None).await
     }
 
     pub async fn slave(address: Address) -> TestApp {
-        TestApp::new(TestAppRole::Slave(address)).await
+        TestApp::new(TestAppRole::Slave(address), None).await
     }
 
-    async fn new(role: TestAppRole) -> TestApp {
+    async fn new(role: TestAppRole, config: Option<Config>) -> TestApp {
         let (tx, _) = broadcast::channel::<Transmission>(100);
 
-        let database = Database::new();
+        let config = config.unwrap_or_else(|| Config::new(None, None));
+        let database = match (&config.dir, &config.db_file_name) {
+            (Some(dir), Some(file_name)) => {
+                let path = PathBuf::from(dir).join(file_name);
+                Database::from_config(path).unwrap()
+            }
+            _ => Database::new(),
+        };
+
         let port = get_available_port().await;
         let address = Address::new("127.0.0.1".into(), port);
 
@@ -56,8 +69,6 @@ impl TestApp {
                     .expect("Failed to sync to master")
             }
         };
-
-        let config = Config::new(None, None);
 
         let settings = Server::new(config, role, address.clone(), replication);
         let redis_server = RedisServer::new(settings);

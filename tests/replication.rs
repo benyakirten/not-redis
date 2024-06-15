@@ -16,7 +16,7 @@ pub async fn test_info_master() {
     };
 
     let message = encode_string("info replication");
-    let resp = send_message(&test_app.address.name(), &message, 512).await;
+    let resp = send_message(&test_app.address.name(), &message).await;
 
     let want_role = "role:master";
     let want_repl_id = format!("master_replid:{}", repl_id);
@@ -37,7 +37,7 @@ pub async fn test_info_slave() {
     let test_app_slave = TestApp::slave(test_app_master.address.clone()).await;
 
     let message = encode_string("info replication");
-    let resp = send_message(&test_app_slave.address.name(), &message, 512).await;
+    let resp = send_message(&test_app_slave.address.name(), &message).await;
 
     let want_role = "role:slave";
     let want_repl_id = format!("master_replid:{}", repl_id);
@@ -54,12 +54,12 @@ pub async fn test_set_replicated_to_slave() {
     let test_app_slave = TestApp::slave(test_app_master.address.clone()).await;
 
     let message = encode_string("set foo bar");
-    let resp = send_message(&test_app_master.address.name(), &message, 512).await;
+    let resp = send_message(&test_app_master.address.name(), &message).await;
 
     assert_eq!(resp, encode_simple_string("OK"));
 
     let message = encode_string("get foo");
-    let resp = send_message(&test_app_slave.address.name(), &message, 512).await;
+    let resp = send_message(&test_app_slave.address.name(), &message).await;
 
     assert_eq!(resp, encode_array_string_item("bar"));
 }

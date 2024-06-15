@@ -7,7 +7,6 @@ const TIMEOUT: time::Duration = time::Duration::from_millis(500);
 async fn inner_send_message(
     address: &str,
     message: &[u8],
-    buffer_size: usize,
     attempt_no: u8,
     max_attempts: u8,
 ) -> String {
@@ -23,7 +22,6 @@ async fn inner_send_message(
             return Box::pin(inner_send_message(
                 address,
                 message,
-                buffer_size,
                 attempt_no + 1,
                 max_attempts,
             ))
@@ -34,14 +32,14 @@ async fn inner_send_message(
     let mut socket = socket.unwrap();
     socket.write_all(message).await.unwrap();
 
-    let mut buffer = vec![0; buffer_size];
+    let mut buffer = vec![0; 1024];
     let read_len = socket.read(&mut buffer).await.unwrap();
 
     String::from_utf8(buffer[..read_len].to_vec()).unwrap()
 }
 
-pub async fn send_message(address: &str, message: &[u8], buffer_size: usize) -> String {
-    inner_send_message(address, message, buffer_size, 0, 5).await
+pub async fn send_message(address: &str, message: &[u8]) -> String {
+    inner_send_message(address, message, 0, 5).await
 }
 
 pub fn encode_string(s: &str) -> Vec<u8> {

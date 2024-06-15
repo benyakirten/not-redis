@@ -34,6 +34,7 @@ impl Address {
     }
 }
 
+#[derive(Debug)]
 pub struct Config {
     pub dir: Option<String>,
     pub db_file_name: Option<String>,
@@ -96,7 +97,7 @@ impl RedisServer {
 
         let database = match (&config.dir, &config.db_file_name) {
             (Some(dir), Some(file_name)) => {
-                let path = PathBuf::from(&format!("{}/{}", dir, file_name));
+                let path = PathBuf::from(dir).join(file_name);
                 data::Database::from_config(path)?
             }
             _ => data::Database::new(),
