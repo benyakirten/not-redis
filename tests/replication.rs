@@ -1,4 +1,6 @@
-use common::{encode_string, send_message, TestApp};
+use common::{
+    encode_array_string_item, encode_simple_string, encode_string, send_message, TestApp,
+};
 
 mod common;
 
@@ -45,3 +47,21 @@ pub async fn test_info_slave() {
     assert!(resp.contains(&want_repl_id));
     assert!(resp.contains(&want_repl_offset));
 }
+
+#[tokio::test]
+pub async fn test_set_replicated_to_slave() {
+    let test_app_master = TestApp::master().await;
+    let test_app_slave = TestApp::slave(test_app_master.address.clone()).await;
+
+    let message = encode_string("set foo bar");
+    let resp = send_message(&test_app_master.address.name(), &message, 512).await;
+
+    assert_eq!(resp, encode_simple_string("OK"));
+
+    let message = encode_string("get foo");
+    let resp = send_message(&test_app_slave.address.name(), &message, 512).await;
+
+    assert_eq!(resp, encode_array_string_item("bar"));
+}
+
+// TODO: Test wait when it's fixed
