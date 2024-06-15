@@ -1,12 +1,13 @@
 use common::{
     empty_string, encode_array_string_item, encode_simple_string, encode_string, send_message,
+    TestApp,
 };
 
 mod common;
 
 #[tokio::test]
 async fn test_set_get_string_success() {
-    let test_app = common::TestApp::simple().await;
+    let test_app = TestApp::master().await;
 
     let message = encode_string("set foo bar");
     let resp = send_message(&test_app.address.name(), &message, 512).await;
@@ -19,7 +20,7 @@ async fn test_set_get_string_success() {
 
 #[tokio::test]
 async fn test_get_missing_item() {
-    let test_app = common::TestApp::simple().await;
+    let test_app = TestApp::master().await;
     let message = encode_string("get foo");
     let resp = send_message(&test_app.address.name(), &message, 512).await;
     assert_eq!(resp, empty_string());
@@ -27,7 +28,7 @@ async fn test_get_missing_item() {
 
 #[tokio::test]
 async fn test_set_missing_value() {
-    let test_app = common::TestApp::simple().await;
+    let test_app = TestApp::master().await;
     let message = encode_string("set foo");
     let resp = send_message(&test_app.address.name(), &message, 512).await;
     // TODO: Fix this when we have proper error handling.
@@ -36,7 +37,7 @@ async fn test_set_missing_value() {
 
 #[tokio::test]
 async fn test_set_missing_key_value() {
-    let test_app = common::TestApp::simple().await;
+    let test_app = TestApp::master().await;
     let message = encode_string("set");
     let resp = send_message(&test_app.address.name(), &message, 512).await;
     // TODO: Fix this when we have proper error handling.
