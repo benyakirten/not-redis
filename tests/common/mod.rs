@@ -6,4 +6,6 @@ mod message;
 
 pub use app::TestApp;
 
-pub use message::{encode_stream_items, encode_string, send_message, StreamData};
+pub use message::{
+    encode_stream_items, encode_streams, encode_string, send_message, StreamData, StreamItem,
+};

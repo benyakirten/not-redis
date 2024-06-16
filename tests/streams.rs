@@ -1,6 +1,8 @@
-use common::{encode_stream_items, encode_string, send_message, StreamData, TestApp};
-use not_redis::encoding::{bulk_string, error_string, simple_string};
-use tokio::sync::broadcast::error;
+use common::{
+    encode_stream_items, encode_streams, encode_string, send_message, StreamData, StreamItem,
+    TestApp,
+};
+use not_redis::encoding::{bulk_string, error_string};
 
 mod common;
 
@@ -104,20 +106,20 @@ async fn xrange_read_specified_range_from_stream() {
     let message = encode_string("xrange cool 100 102");
     let resp = send_message(&address, &message).await;
 
-    let stream_items: Vec<StreamData<'_>> = vec![
-        StreamData {
+    let stream_items: Vec<StreamItem<'_>> = vec![
+        StreamItem {
             id: "100-50",
             items: vec!["one", "two", "three", "four"],
         },
-        StreamData {
+        StreamItem {
             id: "100-100",
             items: vec!["five", "six"],
         },
-        StreamData {
+        StreamItem {
             id: "101-99",
             items: vec!["seven", "eight", "nine", "ten"],
         },
-        StreamData {
+        StreamItem {
             id: "101-100",
             items: vec!["eleven", "twelve"],
         },
@@ -153,20 +155,20 @@ async fn xrange_read_from_start_of_range() {
     let message = encode_string("xrange cool - 102");
     let resp = send_message(&address, &message).await;
 
-    let stream_items: Vec<StreamData<'_>> = vec![
-        StreamData {
+    let stream_items: Vec<StreamItem<'_>> = vec![
+        StreamItem {
             id: "100-50",
             items: vec!["one", "two", "three", "four"],
         },
-        StreamData {
+        StreamItem {
             id: "100-100",
             items: vec!["five", "six"],
         },
-        StreamData {
+        StreamItem {
             id: "101-99",
             items: vec!["seven", "eight", "nine", "ten"],
         },
-        StreamData {
+        StreamItem {
             id: "101-100",
             items: vec!["eleven", "twelve"],
         },
@@ -202,24 +204,25 @@ async fn xrange_read_to_end_of_range() {
     let message = encode_string("xrange cool 101 +");
     let resp = send_message(&address, &message).await;
 
-    let stream_items: Vec<StreamData<'_>> = vec![
-        StreamData {
+    let stream_items: Vec<StreamItem<'_>> = vec![
+        StreamItem {
             id: "101-99",
             items: vec!["seven", "eight", "nine", "ten"],
         },
-        StreamData {
+        StreamItem {
             id: "101-100",
             items: vec!["eleven", "twelve"],
         },
-        StreamData {
+        StreamItem {
             id: "102-99",
             items: vec!["thirteen", "fourteen", "fifteen", "sixteen"],
         },
-        StreamData {
+        StreamItem {
             id: "102-100",
             items: vec!["seventeen", "eighteen"],
         },
     ];
+
     let want_streams = encode_stream_items(stream_items);
 
     assert_eq!(resp, want_streams);
@@ -251,32 +254,33 @@ async fn xrange_full_range() {
     let message = encode_string("xrange cool - +");
     let resp = send_message(&address, &message).await;
 
-    let stream_items: Vec<StreamData<'_>> = vec![
-        StreamData {
+    let stream_items: Vec<StreamItem<'_>> = vec![
+        StreamItem {
             id: "100-50",
             items: vec!["one", "two", "three", "four"],
         },
-        StreamData {
+        StreamItem {
             id: "100-100",
             items: vec!["five", "six"],
         },
-        StreamData {
+        StreamItem {
             id: "101-99",
             items: vec!["seven", "eight", "nine", "ten"],
         },
-        StreamData {
+        StreamItem {
             id: "101-100",
             items: vec!["eleven", "twelve"],
         },
-        StreamData {
+        StreamItem {
             id: "102-99",
             items: vec!["thirteen", "fourteen", "fifteen", "sixteen"],
         },
-        StreamData {
+        StreamItem {
             id: "102-100",
             items: vec!["seventeen", "eighteen"],
         },
     ];
+
     let want_streams = encode_stream_items(stream_items);
 
     assert_eq!(resp, want_streams);
@@ -286,14 +290,67 @@ async fn xrange_full_range() {
 async fn xread_from_single_stream() {
     let test_app = TestApp::master().await;
     let address = test_app.address.name();
-    assert!(true);
+
+    let message = encode_string("xadd cool 100-50 one two three four");
+    send_message(&address, &message).await;
+
+    let message = encode_string("xadd cool 100-100 five six");
+    send_message(&address, &message).await;
+
+    let message = encode_string("xread streams cool 100-75");
+    let resp = send_message(&address, &message).await;
+
+    let stream_items: Vec<StreamItem<'_>> = vec![StreamItem {
+        id: "100-100",
+        items: vec!["five", "six"],
+    }];
+
+    let stream_data = StreamData {
+        name: "cool",
+        items: stream_items,
+    };
+
+    let want = encode_streams(vec![stream_data]);
+
+    assert_eq!(resp, want);
 }
 
 #[tokio::test]
 async fn xread_from_multiple_streams() {
     let test_app = TestApp::master().await;
     let address = test_app.address.name();
-    assert!(true);
+
+    let message = encode_string("xadd cool 100-50 one two three four");
+    send_message(&address, &message).await;
+
+    let message = encode_string("xadd cooler 1000-1000 five six");
+    send_message(&address, &message).await;
+
+    let message = encode_string("xread streams cool cooler 100-0 1000-500");
+    let resp = send_message(&address, &message).await;
+
+    let stream_1_items: Vec<StreamItem<'_>> = vec![StreamItem {
+        id: "100-50",
+        items: vec!["one", "two", "three", "four"],
+    }];
+
+    let stream_1_data = StreamData {
+        name: "cool",
+        items: stream_1_items,
+    };
+
+    let stream_2_items: Vec<StreamItem<'_>> = vec![StreamItem {
+        id: "1000-1000",
+        items: vec!["five", "six"],
+    }];
+
+    let stream_2_data = StreamData {
+        name: "cooler",
+        items: stream_2_items,
+    };
+
+    let want = encode_streams(vec![stream_1_data, stream_2_data]);
+    assert_eq!(resp, want);
 }
 
 #[tokio::test]

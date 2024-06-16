@@ -1,7 +1,8 @@
-use not_redis::encoding::bulk_string;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time;
+
+use not_redis::encoding::bulk_string;
 
 const TIMEOUT: time::Duration = time::Duration::from_millis(500);
 
@@ -57,11 +58,16 @@ pub fn encode_string_array(items: Vec<&str>) -> Vec<u8> {
 }
 
 pub struct StreamData<'a> {
+    pub name: &'a str,
+    pub items: Vec<StreamItem<'a>>,
+}
+
+pub struct StreamItem<'a> {
     pub id: &'a str,
     pub items: Vec<&'a str>,
 }
 
-pub fn encode_stream_items<'a>(items: Vec<StreamData<'a>>) -> String {
+pub fn encode_stream_items<'a>(items: Vec<StreamItem<'a>>) -> String {
     let mut output = format!("*{}\r\n", items.len());
     for item in items {
         let string_array = String::from_utf8(encode_string_array(item.items)).unwrap();
@@ -73,5 +79,19 @@ pub fn encode_stream_items<'a>(items: Vec<StreamData<'a>>) -> String {
         );
         output.push_str(&inner_array)
     }
+    output
+}
+
+pub fn encode_streams<'a>(items: Vec<StreamData<'a>>) -> String {
+    let mut output = format!("*{}\r\n", items.len());
+
+    for item in items.into_iter() {
+        output.push_str("*2\r\n");
+        output.push_str(&bulk_string(&item.name));
+        let stream_items = encode_stream_items(item.items);
+
+        output.push_str(&stream_items);
+    }
+
     output
 }
