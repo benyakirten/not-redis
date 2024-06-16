@@ -6,7 +6,7 @@ use common::{encode_string, send_message, TestApp};
 mod common;
 
 #[tokio::test]
-async fn test_get_empty_config() {
+async fn get_empty_config() {
     let test_app = TestApp::master().await;
 
     let message = encode_string("config get dir");
@@ -21,7 +21,7 @@ async fn test_get_empty_config() {
 }
 
 #[tokio::test]
-async fn test_empty_database_if_unable_to_find_rdb() {
+async fn empty_database_if_unable_to_find_rdb() {
     let config = Config::new(Some("./test".into()), Some("database.rdb".into()));
     let test_app = TestApp::with_config(config).await;
 
@@ -41,7 +41,7 @@ async fn test_empty_database_if_unable_to_find_rdb() {
 }
 
 #[tokio::test]
-async fn test_preset_values_from_valid_rdb() {
+async fn preset_values_from_valid_rdb() {
     let config = Config::new(Some("tests/test_data".into()), Some("dump_1.rdb".into()));
     let test_app = TestApp::with_config(config).await;
 

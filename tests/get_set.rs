@@ -4,7 +4,7 @@ use not_redis::encoding::{bulk_string, empty_string, encode_array, simple_string
 mod common;
 
 #[tokio::test]
-async fn test_set_get_string_success() {
+async fn set_get_string_success() {
     let test_app = TestApp::master().await;
 
     let message = encode_string("set foo bar");
@@ -17,7 +17,7 @@ async fn test_set_get_string_success() {
 }
 
 #[tokio::test]
-async fn test_get_missing_item() {
+async fn get_missing_item() {
     let test_app = TestApp::master().await;
     let message = encode_string("get foo");
     let resp = send_message(&test_app.address.name(), &message).await;
@@ -25,7 +25,7 @@ async fn test_get_missing_item() {
 }
 
 #[tokio::test]
-async fn test_set_missing_value() {
+async fn set_missing_value() {
     let test_app = TestApp::master().await;
     let message = encode_string("set foo");
     let resp = send_message(&test_app.address.name(), &message).await;
@@ -34,7 +34,7 @@ async fn test_set_missing_value() {
 }
 
 #[tokio::test]
-async fn test_set_missing_key_value() {
+async fn set_missing_key_value() {
     let test_app = TestApp::master().await;
     let message = encode_string("set");
     let resp = send_message(&test_app.address.name(), &message).await;
@@ -43,7 +43,7 @@ async fn test_set_missing_key_value() {
 }
 
 #[tokio::test]
-async fn test_get_database_keys() {
+async fn get_database_keys() {
     let test_app = TestApp::master().await;
 
     let message = encode_string("keys *");
@@ -65,4 +65,22 @@ async fn test_get_database_keys() {
     assert!(resp.contains(&bulk_string("baz")));
 }
 
-// TODO: Add tests for expiry
+#[tokio::test]
+async fn set_get_string_with_expiry() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo bar px 100");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("get foo");
+    let resp = send_message(&test_app.address.name(), &message).await;
+    assert_eq!(resp, bulk_string("bar"));
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let message = encode_string("get foo");
+    let resp = send_message(&test_app.address.name(), &message).await;
+    assert_eq!(resp, empty_string());
+}

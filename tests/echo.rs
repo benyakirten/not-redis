@@ -4,7 +4,7 @@ use not_redis::encoding::bulk_string;
 mod common;
 
 #[tokio::test]
-async fn test_echo_success() {
+async fn echo_success() {
     let test_app = TestApp::master().await;
 
     let message = encode_string("echo hello");
@@ -13,7 +13,7 @@ async fn test_echo_success() {
 }
 
 #[tokio::test]
-async fn test_echo_fail_if_short() {
+async fn echo_fail_if_short() {
     let test_app = TestApp::master().await;
 
     let message = encode_string("echo");
@@ -23,7 +23,7 @@ async fn test_echo_fail_if_short() {
 }
 
 #[tokio::test]
-async fn test_echo_fail_if_long() {
+async fn echo_fail_if_long() {
     let test_app = TestApp::master().await;
 
     let message = encode_string("echo hello bye");

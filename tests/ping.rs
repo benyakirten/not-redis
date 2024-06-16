@@ -4,7 +4,7 @@ use not_redis::encoding::simple_string;
 mod common;
 
 #[tokio::test]
-async fn test_ping() {
+async fn ping() {
     let test_app = TestApp::master().await;
     let address = test_app.address.name();
 

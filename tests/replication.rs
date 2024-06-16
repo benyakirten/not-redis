@@ -4,7 +4,7 @@ use not_redis::encoding::{bulk_string, simple_string};
 mod common;
 
 #[tokio::test]
-pub async fn test_info_master() {
+pub async fn info_master() {
     let test_app = TestApp::master().await;
 
     let (repl_id, repl_offset) = {
@@ -27,7 +27,7 @@ pub async fn test_info_master() {
 }
 
 #[tokio::test]
-pub async fn test_info_slave() {
+pub async fn info_slave() {
     let test_app_master = TestApp::master().await;
     let repl_id = {
         let repl = &test_app_master.redis_server.read().await.replication;
@@ -48,7 +48,7 @@ pub async fn test_info_slave() {
 }
 
 #[tokio::test]
-pub async fn test_set_replicated_to_slave() {
+pub async fn set_replicated_to_slave() {
     let test_app_master = TestApp::master().await;
     let test_app_slave = TestApp::slave(test_app_master.address.clone()).await;
 
