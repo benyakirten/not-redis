@@ -1,6 +1,5 @@
-use common::{
-    encode_array_string_item, encode_simple_string, encode_string, send_message, TestApp,
-};
+use common::{encode_string, send_message, TestApp};
+use not_redis::encoding::{bulk_string, simple_string};
 
 mod common;
 
@@ -56,12 +55,12 @@ pub async fn test_set_replicated_to_slave() {
     let message = encode_string("set foo bar");
     let resp = send_message(&test_app_master.address.name(), &message).await;
 
-    assert_eq!(resp, encode_simple_string("OK"));
+    assert_eq!(resp, simple_string("OK"));
 
     let message = encode_string("get foo");
     let resp = send_message(&test_app_slave.address.name(), &message).await;
 
-    assert_eq!(resp, encode_array_string_item("bar"));
+    assert_eq!(resp, bulk_string("bar"));
 }
 
 // TODO: Test wait when it's fixed

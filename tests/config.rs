@@ -1,7 +1,7 @@
-use not_redis::encoding::encode_array;
+use not_redis::encoding::{bulk_string, empty_string, encode_array};
 use not_redis::server::Config;
 
-use common::{empty_string, encode_array_string_item, encode_string, send_message, TestApp};
+use common::{encode_string, send_message, TestApp};
 
 mod common;
 
@@ -48,5 +48,5 @@ async fn test_preset_values_from_valid_rdb() {
     let message = encode_string("get bat");
     let resp = send_message(&test_app.address.name(), &message).await;
 
-    assert_eq!(resp, encode_array_string_item("baz"));
+    assert_eq!(resp, bulk_string("baz"));
 }

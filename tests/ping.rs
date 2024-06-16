@@ -1,4 +1,5 @@
 use common::{encode_string, send_message, TestApp};
+use not_redis::encoding::simple_string;
 
 mod common;
 
@@ -8,6 +9,6 @@ async fn test_ping() {
     let address = test_app.address.name();
 
     let message = encode_string("PING");
-    let resp = send_message(&address, &message, ).await;
-    assert_eq!(resp, "+PONG\r\n");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("PONG"));
 }

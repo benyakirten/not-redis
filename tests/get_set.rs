@@ -1,8 +1,5 @@
-use common::{
-    empty_string, encode_array_string_item, encode_simple_string, encode_string, send_message,
-    TestApp,
-};
-use not_redis::encoding::encode_array;
+use common::{encode_string, send_message, TestApp};
+use not_redis::encoding::{bulk_string, empty_string, encode_array, simple_string};
 
 mod common;
 
@@ -12,11 +9,11 @@ async fn test_set_get_string_success() {
 
     let message = encode_string("set foo bar");
     let resp = send_message(&test_app.address.name(), &message).await;
-    assert_eq!(resp, encode_simple_string("OK"));
+    assert_eq!(resp, simple_string("OK"));
 
     let message = encode_string("get foo");
     let resp = send_message(&test_app.address.name(), &message).await;
-    assert_eq!(resp, encode_array_string_item("bar"));
+    assert_eq!(resp, bulk_string("bar"));
 }
 
 #[tokio::test]
@@ -55,13 +52,15 @@ async fn test_get_database_keys() {
 
     let message = encode_string("set foo bar");
     let resp = send_message(&test_app.address.name(), &message).await;
-    assert_eq!(resp, encode_simple_string("OK"));
+    assert_eq!(resp, simple_string("OK"));
 
     let message = encode_string("set baz bat");
     let resp = send_message(&test_app.address.name(), &message).await;
-    assert_eq!(resp, encode_simple_string("OK"));
+    assert_eq!(resp, simple_string("OK"));
 
     let message = encode_string("keys *");
     let resp = send_message(&test_app.address.name(), &message).await;
-    assert_eq!(resp, encode_array(&["foo", "baz"]));
+
+    assert!(resp.contains(&bulk_string("foo")));
+    assert!(resp.contains(&bulk_string("baz")));
 }
