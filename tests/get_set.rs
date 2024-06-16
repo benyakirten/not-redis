@@ -64,3 +64,5 @@ async fn test_get_database_keys() {
     assert!(resp.contains(&bulk_string("foo")));
     assert!(resp.contains(&bulk_string("baz")));
 }
+
+// TODO: Add tests for expiry
