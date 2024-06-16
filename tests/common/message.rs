@@ -44,14 +44,34 @@ pub async fn send_message(address: &str, message: &[u8]) -> String {
 }
 
 pub fn encode_string(s: &str) -> Vec<u8> {
-    encode_array(s.split_whitespace().collect())
+    encode_string_array(s.split_whitespace().collect())
 }
 
-pub fn encode_array(items: Vec<&str>) -> Vec<u8> {
+pub fn encode_string_array(items: Vec<&str>) -> Vec<u8> {
     let mut output = format!("*{}\r\n", items.len());
     for item in items {
         let processed = &bulk_string(item);
         output.push_str(processed);
     }
     output.into()
+}
+
+pub struct StreamData<'a> {
+    pub id: &'a str,
+    pub items: Vec<&'a str>,
+}
+
+pub fn encode_stream_items<'a>(items: Vec<StreamData<'a>>) -> String {
+    let mut output = format!("*{}\r\n", items.len());
+    for item in items {
+        let string_array = String::from_utf8(encode_string_array(item.items)).unwrap();
+        let inner_array = format!(
+            "*2\r\n${}\r\n{}\r\n{}",
+            item.id.len(),
+            item.id,
+            string_array
+        );
+        output.push_str(&inner_array)
+    }
+    output
 }

@@ -1,5 +1,5 @@
 use common::{encode_string, send_message, TestApp};
-use not_redis::encoding::{bulk_string, empty_string, encode_array, simple_string};
+use not_redis::encoding::{bulk_string, empty_string, encode_string_array, simple_string};
 
 mod common;
 
@@ -48,7 +48,7 @@ async fn get_database_keys() {
 
     let message = encode_string("keys *");
     let resp = send_message(&test_app.address.name(), &message).await;
-    assert_eq!(resp, encode_array(&[]));
+    assert_eq!(resp, encode_string_array(&[]));
 
     let message = encode_string("set foo bar");
     let resp = send_message(&test_app.address.name(), &message).await;

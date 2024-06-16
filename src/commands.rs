@@ -81,7 +81,7 @@ pub fn replica_confirm(
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
     let response = match repl {
         request::ReplicationCommand::Ack => {
-            encoding::encode_array(&["REPLCONF", "ACK", &size.to_string()])
+            encoding::encode_string_array(&["REPLCONF", "ACK", &size.to_string()])
                 .as_bytes()
                 .to_vec()
         }
@@ -137,7 +137,9 @@ pub async fn view_config(
         }
     };
 
-    let response = encoding::encode_array(&[&key, &val]).as_bytes().to_vec();
+    let response = encoding::encode_string_array(&[&key, &val])
+        .as_bytes()
+        .to_vec();
     let response = vec![response];
     Ok(response)
 }
@@ -149,7 +151,9 @@ pub fn get_keys(
     // TODO: Handle empty key group
     let keys = database.keys()?;
     let keys: Vec<&str> = keys.iter().map(|k| k.as_str()).collect();
-    let response = encoding::encode_array(keys.as_slice()).as_bytes().to_vec();
+    let response = encoding::encode_string_array(keys.as_slice())
+        .as_bytes()
+        .to_vec();
 
     let responses = vec![response];
     Ok(responses)

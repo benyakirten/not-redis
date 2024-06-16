@@ -1,30 +1,30 @@
 use crate::data;
 
-fn encode_array_length(size: usize) -> String {
+fn encode_string_array_length(size: usize) -> String {
     format!("*{}\r\n", size)
 }
 
-fn encode_array_item(item: &str) -> String {
+fn encode_string_array_item(item: &str) -> String {
     format!("${}\r\n{}\r\n", item.len(), item)
 }
 
-pub fn encode_array(input: &[&str]) -> String {
-    let mut result = encode_array_length(input.len());
+pub fn encode_string_array(input: &[&str]) -> String {
+    let mut result = encode_string_array_length(input.len());
 
     for item in input {
-        result.push_str(&encode_array_item(item));
+        result.push_str(&encode_string_array_item(item));
     }
 
     result
 }
 
 pub fn encode_stream(stream: &[&data::InnerRedisStream]) -> String {
-    let mut output = encode_array_length(stream.len());
+    let mut output = encode_string_array_length(stream.len());
 
     for inner in stream.iter() {
         let stream_id = inner.stream_id();
-        output.push_str(&encode_array_length(2));
-        output.push_str(&encode_array_item(&stream_id));
+        output.push_str(&encode_string_array_length(2));
+        output.push_str(&encode_string_array_item(&stream_id));
 
         let mut stream_items: Vec<&str> = vec![];
         for item in inner.items.iter() {
@@ -32,7 +32,7 @@ pub fn encode_stream(stream: &[&data::InnerRedisStream]) -> String {
             stream_items.push(item.value.as_str());
         }
 
-        let encoded = encode_array(stream_items.as_slice());
+        let encoded = encode_string_array(stream_items.as_slice());
         output.push_str(&encoded)
     }
 
@@ -149,11 +149,11 @@ mod tests {
 }
 
 pub fn encode_streams(read_streams: Vec<data::ReadStreamItem>) -> String {
-    let mut output = encode_array_length(read_streams.len());
+    let mut output = encode_string_array_length(read_streams.len());
 
     for item in read_streams.iter() {
-        output.push_str(&encode_array_length(2));
-        output.push_str(&encode_array_item(&item.key));
+        output.push_str(&encode_string_array_length(2));
+        output.push_str(&encode_string_array_item(&item.key));
 
         let stream_encode = encode_stream(&item.streams);
         output.push_str(&stream_encode);

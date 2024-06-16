@@ -188,7 +188,7 @@ impl RedisServer {
 
         // let mut response_bytes = vec![0; 1024];
         let mut replicas_acknowledged: usize = 0;
-        let get_ack = encoding::encode_array(&["REPLCONF", "GETACK", "*"]);
+        let get_ack = encoding::encode_string_array(&["REPLCONF", "GETACK", "*"]);
         let get_ack = get_ack.as_bytes();
 
         for stream in streams.iter_mut() {
@@ -296,7 +296,7 @@ pub async fn sync_to_master(
         .await
         .context("Failed to connect to master")?;
 
-    let ping = encoding::encode_array(&["ping"]);
+    let ping = encoding::encode_string_array(&["ping"]);
     connection.write_all(ping.as_bytes()).await?;
 
     let mut bytes = vec![0; 7];
@@ -307,7 +307,7 @@ pub async fn sync_to_master(
         anyhow::bail!("Received unexpected response: {}", response);
     }
 
-    let repl_conf = encoding::encode_array(&[
+    let repl_conf = encoding::encode_string_array(&[
         "REPLCONF",
         "listening-port",
         &server_address.port.to_string(),
@@ -319,7 +319,7 @@ pub async fn sync_to_master(
         anyhow::bail!("Failed to set listening port");
     }
 
-    let repl_conf = encoding::encode_array(&["REPLCONF", "capa", "psync2"]);
+    let repl_conf = encoding::encode_string_array(&["REPLCONF", "capa", "psync2"]);
     connection.write_all(repl_conf.as_bytes()).await?;
 
     let bytes_read = connection.read(&mut bytes).await?;
@@ -327,7 +327,7 @@ pub async fn sync_to_master(
         anyhow::bail!("Failed to set psync2 capability");
     }
 
-    let psync = encoding::encode_array(&["PSYNC", "?", "-1"]);
+    let psync = encoding::encode_string_array(&["PSYNC", "?", "-1"]);
     connection.write_all(psync.as_bytes()).await?;
 
     let mut header = vec![0; 11];
