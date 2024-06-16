@@ -62,6 +62,7 @@ pub async fn handle_stream(
             }
             request::Command::Keys(key_group) => commands::get_keys(&database, key_group),
             request::Command::Type(key) => commands::get_type(&database, key),
+            // TODO: Transmit stream to the replica.
             request::Command::Xadd(command) => commands::add_stream(&database, command, sender),
             request::Command::Xrange(command) => commands::get_stream_range(&database, command),
             request::Command::Xread(command) => {
