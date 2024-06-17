@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
+use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
+
 use common::{
     encode_stream_items, encode_streams, encode_string, send_message, StreamData, StreamItem,
     TestApp,
 };
-use not_redis::encoding::{bulk_string, error_string};
+use not_redis::encoding::{bulk_string, empty_string, error_string};
 
 mod common;
 
@@ -354,22 +359,161 @@ async fn xread_from_multiple_streams() {
 }
 
 #[tokio::test]
-async fn block_read_with_timeout() {
+async fn block_timeout_no_new_range_items() {
     let test_app = TestApp::master().await;
     let address = test_app.address.name();
-    assert!(true);
+
+    let message = encode_string("xadd cool 100-100 five six");
+    send_message(&address, &message).await;
+
+    let join_handle = tokio::spawn(async move {
+        let message = encode_string("xread block 100 streams cool 100-50");
+        let resp = send_message(&address, &message).await;
+        resp
+    });
+
+    let block_resp = join_handle.await.unwrap();
+
+    assert_eq!(block_resp, empty_string());
 }
 
 #[tokio::test]
-async fn block_reads_without_timeout() {
+async fn block_timeout_add_new_range_items() {
     let test_app = TestApp::master().await;
     let address = test_app.address.name();
-    assert!(true);
+
+    let addr = address.clone();
+
+    let join_handle = tokio::spawn(async move {
+        let message = encode_string("xread block 500 streams cool 0");
+        let resp = send_message(&addr, &message).await;
+        resp
+    });
+
+    // The block command has to be sent first. I'm struggling of a good way to ensure that
+    // the block command is activated since Rust has to muster the thread. A 100ms timeout
+    // is hopefully enough.
+    sleep(Duration::from_millis(100)).await;
+
+    let message = encode_string("xadd cool 100-100 five six");
+    send_message(&address, &message).await;
+
+    let block_resp = join_handle.await.unwrap();
+
+    let stream_items: Vec<StreamItem<'_>> = vec![StreamItem {
+        id: "100-100",
+        items: vec!["five", "six"],
+    }];
+
+    let stream_data = StreamData {
+        name: "cool",
+        items: stream_items,
+    };
+    let want_streams = encode_streams(vec![stream_data]);
+
+    assert_eq!(block_resp, want_streams);
 }
 
 #[tokio::test]
-async fn block_reads_no_id_specified() {
+async fn block_reads_without_timeout_resolves_on_new_entries_greater_than_id() {
     let test_app = TestApp::master().await;
     let address = test_app.address.name();
-    assert!(true);
+
+    let addr = address.clone();
+
+    let is_resolved = Arc::new(Mutex::new(false));
+
+    let item_resolved = is_resolved.clone();
+    let join_handle = tokio::spawn(async move {
+        let message = encode_string("xread block 0 streams cool 100");
+        let resp = send_message(&addr, &message).await;
+        {
+            *item_resolved.lock().await = true;
+        }
+
+        resp
+    });
+
+    sleep(Duration::from_millis(500)).await;
+    {
+        let has_been_resolved = is_resolved.lock().await;
+        assert!(!*has_been_resolved);
+    }
+
+    let message = encode_string("xadd cool 50-100 three four");
+    send_message(&address, &message).await;
+
+    sleep(Duration::from_millis(100)).await;
+    {
+        let has_been_resolved = is_resolved.lock().await;
+        assert!(!*has_been_resolved);
+    }
+
+    let message = encode_string("xadd cool 150-100 five six");
+    send_message(&address, &message).await;
+
+    sleep(Duration::from_millis(100)).await;
+    {
+        let has_been_resolved = is_resolved.lock().await;
+        assert!(*has_been_resolved);
+    }
+
+    let block_resp = join_handle.await.unwrap();
+
+    let stream_items: Vec<StreamItem<'_>> = vec![StreamItem {
+        id: "150-100",
+        items: vec!["five", "six"],
+    }];
+
+    let stream_data = StreamData {
+        name: "cool",
+        items: stream_items,
+    };
+    let want_streams = encode_streams(vec![stream_data]);
+
+    assert_eq!(block_resp, want_streams);
+}
+
+#[tokio::test]
+async fn block_reads_with_no_id_specified_returns_all_new_entries() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let addr = address.clone();
+
+    let join_handle = tokio::spawn(async move {
+        let message = encode_string("xread block 200 streams cool $");
+        let resp = send_message(&addr, &message).await;
+
+        resp
+    });
+
+    sleep(Duration::from_millis(100)).await;
+
+    let message = encode_string("xadd cool 1-0 five six");
+    send_message(&address, &message).await;
+
+    let message = encode_string("xadd cool 2-0 seven eight");
+    send_message(&address, &message).await;
+
+    let block_resp = join_handle.await.unwrap();
+
+    let stream_items: Vec<StreamItem<'_>> = vec![
+        StreamItem {
+            id: "1-0",
+            items: vec!["five", "six"],
+        },
+        StreamItem {
+            id: "2-0",
+            items: vec!["seven", "eight"],
+        },
+    ];
+
+    let stream_data = StreamData {
+        name: "cool",
+        items: stream_items,
+    };
+    let want_streams = encode_streams(vec![stream_data]);
+
+    assert_eq!(block_resp, want_streams);
 }
