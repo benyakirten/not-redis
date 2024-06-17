@@ -1,5 +1,5 @@
-![Tests](https://github.com/benyakirten/not-redis/actions/workflows/test/badge.svg)
-![Security Audit](https://github.com/benyakirten/not-redis/actions/workflows/audit/badge.svg)
+![Tests](https://github.com/benyakirten/not-redis/actions/workflows/test.yml/badge.svg)
+![Security Audit](https://github.com/benyakirten/not-redis/actions/workflows/audit.yml/badge.svg)
 
 ## What Am I Looking At?
 
