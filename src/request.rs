@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt::Display, time::Duration};
 
 use anyhow::Context;
 
@@ -85,11 +85,11 @@ pub enum ConfigKey {
     Dbfilename,
 }
 
-impl ToString for ConfigKey {
-    fn to_string(&self) -> String {
+impl Display for ConfigKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Dir => String::from("dir"),
-            Self::Dbfilename => String::from("dbfilename"),
+            Self::Dir => write!(f, "dir"),
+            Self::Dbfilename => write!(f, "dbfilename"),
         }
     }
 }
