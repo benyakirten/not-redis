@@ -10,7 +10,7 @@ pub async fn info_master() {
     let (repl_id, repl_offset) = {
         let repl = &test_app.redis_server.read().await.replication;
         let repl_id = repl.id.clone();
-        let repl_offset = repl.offset.clone();
+        let repl_offset = repl.offset;
         (repl_id, repl_offset)
     };
 

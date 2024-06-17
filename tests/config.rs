@@ -11,12 +11,12 @@ async fn get_empty_config() {
 
     let message = encode_string("config get dir");
     let resp = send_message(&test_app.address.name(), &message).await;
-    let want_dir = encode_string_array(&vec!["dir", ""]);
+    let want_dir = encode_string_array(&["dir", ""]);
     assert_eq!(resp, want_dir);
 
     let message = encode_string("config get dbfilename");
     let resp = send_message(&test_app.address.name(), &message).await;
-    let want_dbfilename = encode_string_array(&vec!["dbfilename", ""]);
+    let want_dbfilename = encode_string_array(&["dbfilename", ""]);
     assert_eq!(resp, want_dbfilename);
 }
 
@@ -27,12 +27,12 @@ async fn empty_database_if_unable_to_find_rdb() {
 
     let message = encode_string("config get dir");
     let resp = send_message(&test_app.address.name(), &message).await;
-    let want_dir = encode_string_array(&vec!["dir", "./test"]);
+    let want_dir = encode_string_array(&["dir", "./test"]);
     assert_eq!(resp, want_dir);
 
     let message = encode_string("config get dbfilename");
     let resp = send_message(&test_app.address.name(), &message).await;
-    let want_dbfilename = encode_string_array(&vec!["dbfilename", "database.rdb"]);
+    let want_dbfilename = encode_string_array(&["dbfilename", "database.rdb"]);
     assert_eq!(resp, want_dbfilename);
 
     let message = encode_string("get foo");

@@ -39,6 +39,20 @@ pub fn encode_stream(stream: &[&data::InnerRedisStream]) -> String {
     output
 }
 
+pub fn encode_streams(read_streams: Vec<data::ReadStreamItem>) -> String {
+    let mut output = encode_string_array_length(read_streams.len());
+
+    for item in read_streams.iter() {
+        output.push_str(&encode_string_array_length(2));
+        output.push_str(&encode_string_array_item(&item.key));
+
+        let stream_encode = encode_stream(&item.streams);
+        output.push_str(&stream_encode);
+    }
+
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,49 +60,32 @@ mod tests {
 
     #[test]
     fn test_encode_stream() {
-        let mut items_1 = vec![];
-        items_1.push(data::RedisStreamItem::new(
-            "foo".to_string(),
-            "bar".to_string(),
-        ));
-        items_1.push(data::RedisStreamItem::new(
-            "bat".to_string(),
-            "baz".to_string(),
-        ));
+        let items_1 = vec![
+            data::RedisStreamItem::new("foo".to_string(), "bar".to_string()),
+            data::RedisStreamItem::new("bat".to_string(), "baz".to_string()),
+        ];
         let inner_1: data::InnerRedisStream = data::InnerRedisStream {
             items: items_1,
             ms_time: 100,
             sequence_number: 200,
         };
 
-        let mut items_2 = vec![];
-        items_2.push(data::RedisStreamItem::new(
+        let items_2 = vec![data::RedisStreamItem::new(
             "one".to_string(),
             "two".to_string(),
-        ));
+        )];
         let inner_2: data::InnerRedisStream = data::InnerRedisStream {
             items: items_2,
             ms_time: 2000,
             sequence_number: 200,
         };
 
-        let mut items_3 = vec![];
-        items_3.push(data::RedisStreamItem::new(
-            "three".to_string(),
-            "four".to_string(),
-        ));
-        items_3.push(data::RedisStreamItem::new(
-            "five".to_string(),
-            "six".to_string(),
-        ));
-        items_3.push(data::RedisStreamItem::new(
-            "seven".to_string(),
-            "eight".to_string(),
-        ));
-        items_3.push(data::RedisStreamItem::new(
-            "nine".to_string(),
-            "ten".to_string(),
-        ));
+        let items_3 = vec![
+            data::RedisStreamItem::new("three".to_string(), "four".to_string()),
+            data::RedisStreamItem::new("five".to_string(), "six".to_string()),
+            data::RedisStreamItem::new("seven".to_string(), "eight".to_string()),
+            data::RedisStreamItem::new("nine".to_string(), "ten".to_string()),
+        ];
         let inner_3: data::InnerRedisStream = data::InnerRedisStream {
             items: items_3,
             ms_time: 2000,
@@ -146,18 +143,4 @@ mod tests {
 
         assert_eq!(got_items, want_items);
     }
-}
-
-pub fn encode_streams(read_streams: Vec<data::ReadStreamItem>) -> String {
-    let mut output = encode_string_array_length(read_streams.len());
-
-    for item in read_streams.iter() {
-        output.push_str(&encode_string_array_length(2));
-        output.push_str(&encode_string_array_item(&item.key));
-
-        let stream_encode = encode_stream(&item.streams);
-        output.push_str(&stream_encode);
-    }
-
-    output
 }

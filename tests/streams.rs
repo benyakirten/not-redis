@@ -51,7 +51,6 @@ async fn specified_stream_id_must_be_greater_than_previous() {
 async fn unspecified_stream_id_be_greater_than_previous() {
     let test_app = TestApp::master().await;
     let address = test_app.address.name();
-    assert!(true);
 
     let message = encode_string("xadd cool 100-* one two");
     let resp = send_message(&address, &message).await;
@@ -74,6 +73,8 @@ async fn autogenerate_consecutive_stream_ids() {
     let got_pieces = got_msg[0].split('-').collect::<Vec<&str>>();
 
     let got_id_1 = got_pieces[0].parse::<i64>().unwrap();
+
+    sleep(Duration::from_millis(100)).await;
 
     let message = encode_string("xadd cool * three four");
     let resp = send_message(&address, &message).await;
@@ -368,8 +369,7 @@ async fn block_timeout_no_new_range_items() {
 
     let join_handle = tokio::spawn(async move {
         let message = encode_string("xread block 100 streams cool 100-50");
-        let resp = send_message(&address, &message).await;
-        resp
+        send_message(&address, &message).await
     });
 
     let block_resp = join_handle.await.unwrap();
@@ -386,8 +386,7 @@ async fn block_timeout_add_new_range_items() {
 
     let join_handle = tokio::spawn(async move {
         let message = encode_string("xread block 500 streams cool 0");
-        let resp = send_message(&addr, &message).await;
-        resp
+        send_message(&addr, &message).await
     });
 
     // The block command has to be sent first. I'm struggling of a good way to ensure that
@@ -483,9 +482,7 @@ async fn block_reads_with_no_id_specified_returns_all_new_entries() {
 
     let join_handle = tokio::spawn(async move {
         let message = encode_string("xread block 200 streams cool $");
-        let resp = send_message(&addr, &message).await;
-
-        resp
+        send_message(&addr, &message).await
     });
 
     sleep(Duration::from_millis(100)).await;
