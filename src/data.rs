@@ -84,6 +84,12 @@ impl ValueType {
 
 pub struct Database(Arc<RwLock<HashMap<String, DatabaseItem>>>);
 
+impl Default for Database {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Database {
     pub fn new() -> Self {
         // If we persist data to a database, we can fetch the data on initialization

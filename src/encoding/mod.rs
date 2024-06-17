@@ -3,7 +3,7 @@ mod integer;
 mod rdb;
 mod strings;
 
-pub use array::{encode_array, encode_stream, encode_streams};
+pub use array::{encode_stream, encode_streams, encode_string_array};
 pub use integer::encode_integer;
 pub use rdb::{decode_rdb_int, decode_rdb_string, encode_rdb};
 pub use strings::{

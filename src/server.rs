@@ -13,6 +13,7 @@ use tokio::time::{sleep, Instant};
 
 use crate::{data, encoding, request, stream};
 
+#[derive(Clone)]
 pub struct Address {
     host: String,
     port: u16,
@@ -27,11 +28,22 @@ impl Address {
     pub fn name(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
+
+    pub fn new(host: String, port: u16) -> Self {
+        Address { host, port }
+    }
 }
 
+#[derive(Debug)]
 pub struct Config {
     pub dir: Option<String>,
     pub db_file_name: Option<String>,
+}
+
+impl Config {
+    pub fn new(dir: Option<String>, db_file_name: Option<String>) -> Self {
+        Config { dir, db_file_name }
+    }
 }
 
 pub enum ServerRole {
@@ -54,7 +66,27 @@ pub struct Server {
     pub replication: Replication,
 }
 
+impl Server {
+    pub fn new(
+        config: Config,
+        role: ServerRole,
+        address: Address,
+        replication: Replication,
+    ) -> Self {
+        Server {
+            config,
+            role,
+            address,
+            replication,
+        }
+    }
+}
+
 impl RedisServer {
+    pub fn new(settings: Server) -> Self {
+        RedisServer(Arc::new(RwLock::new(settings)))
+    }
+
     pub async fn from_args() -> Result<(data::Database, Self), anyhow::Error> {
         let args: Vec<String> = env::args().collect();
 
@@ -65,7 +97,7 @@ impl RedisServer {
 
         let database = match (&config.dir, &config.db_file_name) {
             (Some(dir), Some(file_name)) => {
-                let path = PathBuf::from(&format!("{}/{}", dir, file_name));
+                let path = PathBuf::from(dir).join(file_name);
                 data::Database::from_config(path)?
             }
             _ => data::Database::new(),
@@ -80,7 +112,7 @@ impl RedisServer {
             config,
         };
 
-        let server = RedisServer(Arc::new(RwLock::new(settings)));
+        let server = RedisServer::new(settings);
         Ok((database, server))
     }
 
@@ -156,7 +188,7 @@ impl RedisServer {
 
         // let mut response_bytes = vec![0; 1024];
         let mut replicas_acknowledged: usize = 0;
-        let get_ack = encoding::encode_array(&["REPLCONF", "GETACK", "*"]);
+        let get_ack = encoding::encode_string_array(&["REPLCONF", "GETACK", "*"]);
         let get_ack = get_ack.as_bytes();
 
         for stream in streams.iter_mut() {
@@ -255,7 +287,7 @@ fn parse_u16_port(s: &str) -> Result<u16, anyhow::Error> {
     s.parse::<u16>().context("Parsing port as u16")
 }
 
-async fn sync_to_master(
+pub async fn sync_to_master(
     master_address: Address,
     server_address: &Address,
     database: data::Database,
@@ -264,7 +296,7 @@ async fn sync_to_master(
         .await
         .context("Failed to connect to master")?;
 
-    let ping = encoding::encode_array(&["ping"]);
+    let ping = encoding::encode_string_array(&["ping"]);
     connection.write_all(ping.as_bytes()).await?;
 
     let mut bytes = vec![0; 7];
@@ -275,7 +307,7 @@ async fn sync_to_master(
         anyhow::bail!("Received unexpected response: {}", response);
     }
 
-    let repl_conf = encoding::encode_array(&[
+    let repl_conf = encoding::encode_string_array(&[
         "REPLCONF",
         "listening-port",
         &server_address.port.to_string(),
@@ -287,7 +319,7 @@ async fn sync_to_master(
         anyhow::bail!("Failed to set listening port");
     }
 
-    let repl_conf = encoding::encode_array(&["REPLCONF", "capa", "psync2"]);
+    let repl_conf = encoding::encode_string_array(&["REPLCONF", "capa", "psync2"]);
     connection.write_all(repl_conf.as_bytes()).await?;
 
     let bytes_read = connection.read(&mut bytes).await?;
@@ -295,7 +327,7 @@ async fn sync_to_master(
         anyhow::bail!("Failed to set psync2 capability");
     }
 
-    let psync = encoding::encode_array(&["PSYNC", "?", "-1"]);
+    let psync = encoding::encode_string_array(&["PSYNC", "?", "-1"]);
     connection.write_all(psync.as_bytes()).await?;
 
     let mut header = vec![0; 11];
@@ -373,7 +405,7 @@ async fn sync_to_master(
     Ok((replication, role))
 }
 
-fn generate_random_sha1_hex() -> String {
+pub fn generate_random_sha1_hex() -> String {
     let mut rng = rand::thread_rng();
     let mut sha1 = Sha1::new();
 
