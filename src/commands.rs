@@ -29,7 +29,7 @@ pub fn echo_response(body: String) -> Result<Vec<Vec<u8>>, anyhow::Error> {
 }
 
 pub fn get_value(database: &data::Database, key: String) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let value = database.get(&key);
+    let value = database.get(&key)?;
     let response = match value {
         Some(data) => data,
         None => encoding::empty_string(),
@@ -126,7 +126,7 @@ pub fn get_delete_key(
     database: &data::Database,
     key: String,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let value = database.get_remove(&key);
+    let value = database.get_remove(&key)?;
     let response = match value {
         Some(data) => data,
         None => encoding::empty_string(),

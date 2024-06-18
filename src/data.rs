@@ -101,9 +101,19 @@ impl Database {
         Self(Arc::new(RwLock::new(HashMap::new())))
     }
 
-    pub fn get(&self, key: &str) -> Option<String> {
+    pub fn get(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
         let database = self.0.read().unwrap();
-        database.get(key).map(|v| v.data.data())
+        let item = database.get(key);
+
+        let data = match item {
+            Some(DatabaseItem::Stream(_)) => {
+                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
+            }
+            Some(DatabaseItem::String(redis_string)) => Some(redis_string.data()),
+            None => None,
+        };
+
+        Ok(data)
     }
 
     pub fn get_type(&self, key: &str) -> Option<String> {
@@ -111,16 +121,16 @@ impl Database {
         database.get(key).map(|v| v.data_type())
     }
 
-    pub fn set(&self, key: String, value: RedisString) -> Result<Option<String>, anyhow::Error> {
+    pub fn set(&self, key: String, value: RedisString) -> Result<(), anyhow::Error> {
         let duration = value.duration;
+
+        let database_item = DatabaseItem::String(value);
 
         let item = self
             .0
             .write()
             .map_err(|e| anyhow::anyhow!("{}", e))?
-            .insert(key.to_string(), value);
-
-        let return_value = item.as_ref().map(|i| i.data.data());
+            .insert(key.to_string(), database_item);
 
         if let Some(dur) = duration {
             let database = self.clone();
@@ -129,12 +139,22 @@ impl Database {
                 sleep(dur).await;
                 database.remove(&key);
             });
-            if let Some(mut item) = item {
-                item.set_cancellation(join_handle);
+            if let Some(item) = item {
+                match item {
+                    DatabaseItem::String(redis_string) => {
+                        if let Some(process) = redis_string.cancellation_process {
+                            process.abort();
+                        }
+                        redis_string.set_cancellation(join_handle);
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
             }
         };
 
-        Ok(return_value)
+        Ok(())
     }
 
     pub fn set_value(
@@ -148,10 +168,16 @@ impl Database {
         let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let item = db.get(&key);
+        let item = match item {
+            Some(DatabaseItem::Stream(_)) => {
+                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
+            }
+            Some(DatabaseItem::String(redis_string)) => Some(redis_string),
+            None => None,
+        };
 
         let return_data = if return_old_value {
-            item.map(|i| i.data.data())
-                .unwrap_or_else(|| empty_string())
+            item.map(|i| i.data()).unwrap_or_else(|| empty_string())
         } else {
             okay_string()
         };
@@ -170,16 +196,26 @@ impl Database {
 
         match (overwrites, item.is_some()) {
             (true, _) | (_, false) => {
-                let value = DatabaseItem::new(value, duration);
-                db.insert(key.to_string(), value);
+                let value = RedisString::new(value, duration);
                 // TODO: Cancel old cancellation process
+
+                if let Some(item) = item {
+                    if let Some(process) = item.cancellation_process {
+                        process.abort();
+                    }
+                }
+
                 if let Some(dur) = duration {
                     let database = self.clone();
-                    tokio::spawn(async move {
+                    let process = tokio::spawn(async move {
                         sleep(dur).await;
                         database.remove(&key);
                     });
+
+                    value.set_cancellation(process);
                 };
+
+                db.insert(key.to_string(), DatabaseItem::String(value));
             }
             _ => {}
         };
@@ -233,7 +269,7 @@ impl Database {
                 let stream_id = inner_redis_stream.stream_id();
 
                 let redis_stream = RedisStream(vec![inner_redis_stream]);
-                let item = DatabaseItem::new(redis_stream, None);
+                let item = DatabaseItem::Stream(redis_stream);
                 database.insert(command.stream_key, item);
 
                 Ok(stream_id)
@@ -310,7 +346,7 @@ impl Database {
         let stream = match database.get(&key) {
             None => anyhow::bail!("No stream found at {}", key),
             Some(item) => match &item {
-                DatabaseItem::String(..) => anyhow::bail!("No stream found at {}", key),
+                DatabaseItem::String(_) => anyhow::bail!("No stream found at {}", key),
                 DatabaseItem::Stream(stream) => stream,
             },
         };
@@ -420,14 +456,16 @@ impl Database {
     pub fn adjust_value_by_int(&self, key: &str, adjustment: i64) -> Result<String, anyhow::Error> {
         let mut db = self.0.write().unwrap();
         let value = match db.get_mut(key) {
-            Some(item) => match &mut item.data {
-                RedisData::String(data, data_type) => {
-                    let value = match data_type {
-                        RedisStringDataType::Float => adjust_float_value_by_int(data, adjustment),
-                        _ => adjust_int_value_by_int(data, adjustment),
+            Some(item) => match item {
+                DatabaseItem::String(redis_string) => {
+                    let value = match redis_string.data_type {
+                        RedisStringDataType::Float => {
+                            adjust_float_value_by_int(&redis_string.data, adjustment)
+                        }
+                        _ => adjust_int_value_by_int(&redis_string.data, adjustment),
                     }?;
 
-                    *data = value.clone();
+                    redis_string.data = value.clone();
 
                     Ok(value)
                 }
@@ -437,10 +475,8 @@ impl Database {
                 .context(format!("Item at key {} is not a string", key))),
             },
             None => {
-                db.insert(
-                    key.to_string(),
-                    DatabaseItem::new(adjustment.to_string(), None),
-                );
+                let data = RedisString::new(adjustment.to_string(), None);
+                db.insert(key.to_string(), DatabaseItem::String(data));
                 Ok(adjustment.to_string())
             }
         }?;
@@ -455,15 +491,17 @@ impl Database {
     ) -> Result<String, anyhow::Error> {
         let mut db = self.0.write().unwrap();
         let value = match db.get_mut(key) {
-            Some(item) => match &mut item.data {
-                RedisData::String(data, data_type) => {
-                    let value = match data_type {
-                        RedisStringDataType::Float => adjust_float_value_by_float(data, adjustment),
-                        _ => adjust_int_value_by_float(data, adjustment),
+            Some(item) => match &mut item {
+                DatabaseItem::String(redis_string) => {
+                    let value = match redis_string.data_type {
+                        RedisStringDataType::Float => {
+                            adjust_float_value_by_float(&redis_string.data, adjustment)
+                        }
+                        _ => adjust_int_value_by_float(&redis_string.data, adjustment),
                     }?;
 
-                    *data = value.clone();
-                    *data_type = RedisStringDataType::Float;
+                    redis_string.data = value.clone();
+                    redis_string.data_type = RedisStringDataType::Float;
 
                     Ok(value)
                 }
@@ -473,10 +511,8 @@ impl Database {
                 .context(format!("Item at key {} is not a string", key))),
             },
             None => {
-                db.insert(
-                    key.to_string(),
-                    DatabaseItem::new(adjustment.to_string(), None),
-                );
+                let redis_string = RedisString::new(adjustment.to_string(), None);
+                db.insert(key.to_string(), DatabaseItem::String(redis_string));
                 Ok(adjustment.to_string())
             }
         }?;
@@ -914,7 +950,7 @@ fn read_streams_sync(
         let item = database.get(&command_stream.key).ok_or_else(|| {
             anyhow::anyhow!("No stream found for item at key {}", &command_stream.key)
         })?;
-        let stream = match &item.data {
+        let stream = match &item {
             DatabaseItem::Stream(stream) => stream,
             _ => {
                 anyhow::bail!("Item at key {} is not a stream", &command_stream.key);
