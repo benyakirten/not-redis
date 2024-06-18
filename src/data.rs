@@ -141,8 +141,8 @@ impl Database {
             });
             if let Some(item) = item {
                 match item {
-                    DatabaseItem::String(redis_string) => {
-                        if let Some(process) = redis_string.cancellation_process {
+                    DatabaseItem::String(mut redis_string) => {
+                        if let Some(process) = &redis_string.cancellation_process {
                             process.abort();
                         }
                         redis_string.set_cancellation(join_handle);
@@ -155,6 +155,10 @@ impl Database {
         };
 
         Ok(())
+    }
+
+    fn set_item(&self, key: String, item: DatabaseItem) -> Option<DatabaseItem> {
+        self.0.write().unwrap().insert(key, item)
     }
 
     pub fn set_value(
@@ -196,20 +200,21 @@ impl Database {
 
         match (overwrites, item.is_some()) {
             (true, _) | (_, false) => {
-                let value = RedisString::new(value, duration);
+                let mut value = RedisString::new(value, duration);
                 // TODO: Cancel old cancellation process
 
                 if let Some(item) = item {
-                    if let Some(process) = item.cancellation_process {
+                    if let Some(process) = &item.cancellation_process {
                         process.abort();
                     }
                 }
 
                 if let Some(dur) = duration {
                     let database = self.clone();
+                    let key_copy = key.clone();
                     let process = tokio::spawn(async move {
                         sleep(dur).await;
-                        database.remove(&key);
+                        database.remove(&key_copy);
                     });
 
                     value.set_cancellation(process);
@@ -421,7 +426,7 @@ impl Database {
     }
 
     pub fn get_remove(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
-        let mut db = self.0.write().unwrap();
+        let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
         let item = db.get(key);
 
         if item.is_none() {
@@ -431,7 +436,7 @@ impl Database {
         let item = item.unwrap();
         match item {
             DatabaseItem::String(item) => {
-                if let Some(process) = item.cancellation_process {
+                if let Some(process) = &item.cancellation_process {
                     process.abort();
                 }
                 let result = db.remove(key);
@@ -491,7 +496,7 @@ impl Database {
     ) -> Result<String, anyhow::Error> {
         let mut db = self.0.write().unwrap();
         let value = match db.get_mut(key) {
-            Some(item) => match &mut item {
+            Some(item) => match item {
                 DatabaseItem::String(redis_string) => {
                     let value = match redis_string.data_type {
                         RedisStringDataType::Float => {
@@ -570,19 +575,19 @@ impl Database {
                 OpCode::ExpireTimeMS => {
                     let database_item = parse_expire_time_ms(&mut cursor)?;
                     if let Some((key, value)) = database_item {
-                        database.set(key, value)?;
+                        database.set_item(key, value);
                     }
                 }
                 OpCode::ExpireTime => {
                     let database_item = parse_expire_time_sec(&mut cursor)?;
                     if let Some((key, value)) = database_item {
-                        database.set(key, value)?;
+                        database.set_item(key, value);
                     }
                 }
                 OpCode::Other(value_type_byte) => {
                     let value_type = ValueType::from_byte(value_type_byte)?;
                     let (key, value) = read_key_value_pair(value_type, None, &mut cursor)?;
-                    database.set(key, value)?;
+                    database.set_item(key, value);
                 }
                 OpCode::Eof => break,
             }
@@ -768,7 +773,8 @@ fn read_key_value_pair(
         _ => anyhow::bail!("{:?} value type not supported", value_type),
     };
 
-    let database_item = DatabaseItem::new(value, expire_time);
+    let redis_string = RedisString::new(value, expire_time);
+    let database_item = DatabaseItem::String(redis_string);
 
     Ok((key, database_item))
 }
