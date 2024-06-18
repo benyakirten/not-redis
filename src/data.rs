@@ -427,23 +427,25 @@ impl Database {
 
     pub fn get_remove(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
         let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
-        let item = db.get(key);
 
-        if item.is_none() {
-            return Ok(None);
-        }
+        if let Some(item) = db.get(key) {
+            match item {
+                DatabaseItem::String(item) => {
+                    let data = item.data();
 
-        let item = item.unwrap();
-        match item {
-            DatabaseItem::String(item) => {
-                if let Some(process) = &item.cancellation_process {
-                    process.abort();
+                    if let Some(process) = &item.cancellation_process {
+                        process.abort();
+                    }
+
+                    db.remove(key);
+                    Ok(Some(data))
                 }
-                let result = db.remove(key);
-                let result = result.map(|_| item.data());
-                Ok(result)
+                _ => anyhow::bail!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                ),
             }
-            _ => anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value"),
+        } else {
+            Ok(None)
         }
     }
 
