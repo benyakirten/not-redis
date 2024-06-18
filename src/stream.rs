@@ -51,6 +51,8 @@ pub async fn handle_stream(
             request::Command::Echo(body) => commands::echo_response(body),
             request::Command::Get(key) => commands::get_value(&database, key),
             request::Command::Set(key, value) => commands::set_value(&database, key, value),
+            request::Command::Del(keys) => commands::delete_keys(&database, keys),
+            request::Command::GetDel(key) => commands::get_delete_key(&database, key),
             request::Command::Info => commands::get_info(&server).await,
             request::Command::ReplConf(repl) => commands::replica_confirm(repl, 0),
             request::Command::Psync(..) => commands::perform_psync(&server).await,
@@ -67,6 +69,17 @@ pub async fn handle_stream(
             request::Command::Xrange(command) => commands::get_stream_range(&database, command),
             request::Command::Xread(command) => {
                 commands::read_streams(&database, command, receiver).await
+            }
+            request::Command::Incr(key) => commands::increment_value_by_int(&database, key, 1),
+            request::Command::IncrBy(key, amount) => {
+                commands::increment_value_by_int(&database, key, amount)
+            }
+            request::Command::IncrByFloat(key, amount) => {
+                commands::increment_value_by_float(&database, key, amount)
+            }
+            request::Command::Decr(key) => commands::increment_value_by_int(&database, key, -1),
+            request::Command::DecrBy(key, amount) => {
+                commands::increment_value_by_int(&database, key, amount)
             }
         }?;
 

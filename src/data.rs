@@ -117,12 +117,11 @@ impl Database {
             .insert(key.to_string(), value)
             .map(|v| v.data);
 
-        if duration.is_some() {
-            let duration = duration.unwrap();
+        if let Some(dur) = duration {
             let database = self.clone();
             let key = key.to_string();
             tokio::spawn(async move {
-                tokio::time::sleep(duration).await;
+                tokio::time::sleep(dur).await;
                 database.remove(&key);
             });
         };
@@ -256,7 +255,7 @@ impl Database {
         let stream = match database.get(&key) {
             None => anyhow::bail!("No stream found at {}", key),
             Some(item) => match &item.data {
-                RedisData::String(_) => anyhow::bail!("No stream found at {}", key),
+                RedisData::String(..) => anyhow::bail!("No stream found at {}", key),
                 RedisData::Stream(stream) => stream,
             },
         };
@@ -328,6 +327,89 @@ impl Database {
 
     pub fn remove(&self, key: &str) -> bool {
         self.0.write().unwrap().remove(key).is_none()
+    }
+
+    pub fn get_remove(&self, key: &str) -> Option<String> {
+        let mut db = self.0.write().unwrap();
+        db.remove(key).map(|v| v.data.data())
+    }
+
+    pub fn remove_multiple(&self, keys: Vec<String>) -> usize {
+        let mut db = self.0.write().unwrap();
+        keys.iter().fold(0, |acc, key| {
+            if db.remove(key).is_some() {
+                acc + 1
+            } else {
+                acc
+            }
+        })
+    }
+
+    pub fn adjust_value_by_int(&self, key: &str, adjustment: i64) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().unwrap();
+        let value = match db.get_mut(key) {
+            Some(item) => match &mut item.data {
+                RedisData::String(data, data_type) => {
+                    let value = match data_type {
+                        RedisStringDataType::Float => adjust_float_value_by_int(data, adjustment),
+                        _ => adjust_int_value_by_int(data, adjustment),
+                    }?;
+
+                    *data = value.clone();
+
+                    Ok(value)
+                }
+                _ => Err(anyhow::anyhow!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                )
+                .context(format!("Item at key {} is not a string", key))),
+            },
+            None => {
+                db.insert(
+                    key.to_string(),
+                    DatabaseItem::new(adjustment.to_string(), None),
+                );
+                Ok(adjustment.to_string())
+            }
+        }?;
+
+        Ok(value)
+    }
+
+    pub fn adjust_value_by_float(
+        &self,
+        key: &str,
+        adjustment: f64,
+    ) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().unwrap();
+        let value = match db.get_mut(key) {
+            Some(item) => match &mut item.data {
+                RedisData::String(data, data_type) => {
+                    let value = match data_type {
+                        RedisStringDataType::Float => adjust_float_value_by_float(data, adjustment),
+                        _ => adjust_int_value_by_float(data, adjustment),
+                    }?;
+
+                    *data = value.clone();
+                    *data_type = RedisStringDataType::Float;
+
+                    Ok(value)
+                }
+                _ => Err(anyhow::anyhow!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                )
+                .context(format!("Item at key {} is not a string", key))),
+            },
+            None => {
+                db.insert(
+                    key.to_string(),
+                    DatabaseItem::new(adjustment.to_string(), None),
+                );
+                Ok(adjustment.to_string())
+            }
+        }?;
+
+        Ok(value)
     }
 
     pub fn keys(&self) -> Result<Vec<String>, anyhow::Error> {
@@ -418,14 +500,20 @@ pub struct DatabaseItem {
 
 #[derive(Debug)]
 pub enum RedisData {
-    String(String),
+    String(String, RedisStringDataType),
     Stream(RedisStream),
+}
+
+#[derive(Debug)]
+pub enum RedisStringDataType {
+    String,
+    Float,
 }
 
 impl RedisData {
     pub fn data_type(&self) -> String {
         let data_type = match self {
-            RedisData::String(_) => "string",
+            RedisData::String(..) => "string",
             RedisData::Stream(_) => "stream",
         };
         encoding::bulk_string(data_type)
@@ -433,7 +521,7 @@ impl RedisData {
 
     pub fn data(&self) -> String {
         match self {
-            RedisData::String(data) => encoding::bulk_string(data),
+            RedisData::String(data, _) => encoding::bulk_string(data),
             RedisData::Stream(_data) => todo!(),
         }
     }
@@ -455,7 +543,7 @@ impl DatabaseItem {
 
 impl Encode for String {
     fn encode(self) -> RedisData {
-        RedisData::String(self)
+        RedisData::String(self, RedisStringDataType::String)
     }
 }
 
@@ -825,4 +913,46 @@ fn stream_entry_greater_than_start(
             true
         }
     }
+}
+
+fn adjust_float_value_by_int(data: &str, amount: i64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<f64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not a float or out of range"))?;
+
+    let value = value + amount as f64;
+    Ok(value.to_string())
+}
+
+fn adjust_float_value_by_float(data: &str, amount: f64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<f64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not a float or out of range"))?;
+
+    let value = value + amount;
+    Ok(value.to_string())
+}
+
+fn adjust_int_value_by_int(data: &str, amount: i64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not an integer or out of range"))?;
+
+    let value = value
+        .checked_add(amount)
+        .ok_or_else(|| anyhow::anyhow!("ERR increment or decrement would overflow"))?;
+
+    Ok(value.to_string())
+}
+
+fn adjust_int_value_by_float(data: &str, amount: f64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not an integer or out of range"))?;
+
+    let value = value
+        .checked_add(amount as i64)
+        .ok_or_else(|| anyhow::anyhow!("ERR increment or decrement would overflow"))?;
+
+    Ok(value.to_string())
 }

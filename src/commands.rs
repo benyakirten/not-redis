@@ -105,6 +105,35 @@ pub fn set_value(
     Ok(response)
 }
 
+pub fn delete_keys(
+    database: &data::Database,
+    keys: Vec<String>,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let count = database.remove_multiple(keys);
+
+    let response = encoding::encode_integer(count).as_bytes().to_vec();
+    let response = vec![response];
+
+    Ok(response)
+}
+
+pub fn get_delete_key(
+    database: &data::Database,
+    key: String,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let value = database.get_remove(&key);
+    let response = match value {
+        Some(data) => data,
+        None => encoding::empty_string(),
+    }
+    .as_bytes()
+    .to_vec();
+
+    let response = vec![response];
+
+    Ok(response)
+}
+
 pub async fn transmit_wait(
     server: &server::RedisServer,
     num_replicas: usize,
@@ -210,6 +239,34 @@ pub async fn read_streams(
     let response = database
         .read_from_streams(command.block, command.streams, receiver)
         .await?
+        .as_bytes()
+        .to_vec();
+
+    let responses = vec![response];
+    Ok(responses)
+}
+
+pub fn increment_value_by_int(
+    database: &data::Database,
+    key: String,
+    adjustment: i64,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let response = database
+        .adjust_value_by_int(&key, adjustment)?
+        .as_bytes()
+        .to_vec();
+
+    let responses = vec![response];
+    Ok(responses)
+}
+
+pub fn increment_value_by_float(
+    database: &data::Database,
+    key: String,
+    adjustment: f64,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let response = database
+        .adjust_value_by_float(&key, adjustment)?
         .as_bytes()
         .to_vec();
 

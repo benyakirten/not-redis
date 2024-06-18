@@ -10,6 +10,8 @@ pub enum Command {
     Echo(String),
     Set(String, DatabaseItem),
     Get(String),
+    Del(Vec<String>),
+    GetDel(String),
     Info,
     ReplConf(ReplicationCommand),
     Psync(String, PsyncOffset),
@@ -20,6 +22,11 @@ pub enum Command {
     Xadd(XAddCommand),
     Xrange(XRangeCommand),
     Xread(XReadCommand),
+    Incr(String),
+    IncrBy(String, i64),
+    IncrByFloat(String, f64),
+    Decr(String),
+    DecrBy(String, i64),
 }
 
 #[derive(Debug)]
@@ -114,6 +121,8 @@ impl Command {
             "echo" => parse_echo(body),
             "set" => parse_set(body),
             "get" => parse_get(body),
+            "del" => parse_delete(body),
+            "getdel" => parse_get_delete(body),
             "info" => parse_info(body),
             "replconf" => parse_replconf(body),
             "psync" => parse_psync(body),
@@ -124,6 +133,11 @@ impl Command {
             "xadd" => parse_xadd(body),
             "xrange" => parse_xrange(body),
             "xread" => parse_xread(body),
+            "incr" => parse_increment(body),
+            "incrby" => parse_increment_by(body),
+            "Incrbyfloat" => parse_increment_by_float(body),
+            "decr" => parse_decrement(body),
+            "decrby" => parse_decrement_by(body),
             _ => anyhow::bail!("unknown command: {}", route),
         }
     }
@@ -510,4 +524,93 @@ fn parse_xread(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let command = Command::Xread(command);
 
     Ok(command)
+}
+
+fn parse_increment(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    let key = body
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage incr <key>"))?
+        .to_string();
+
+    Ok(Command::Incr(key))
+}
+
+fn parse_increment_by(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    let key = body
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage incrby <key> <increment>"))?
+        .to_string();
+
+    let increment = body
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("usage incrby <key> <increment>"))?;
+    let increment = str::parse::<i64>(increment).map_err(|e| {
+        anyhow::anyhow!("ERR value is not an integer or out of range")
+            .context(format!("Unable to parse as u64: {}", e))
+    })?;
+
+    Ok(Command::IncrBy(key, increment))
+}
+
+fn parse_increment_by_float(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    let key = body
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage IncrByFloat <key> <increment"))?
+        .to_string();
+
+    let increment = body
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("usage incrby <key> <increment>"))?;
+
+    let increment = str::parse::<f64>(increment).map_err(|e| {
+        anyhow::anyhow!("ERR value is not a valid float")
+            .context(format!("Unable to parse as u64: {}", e))
+    })?;
+
+    Ok(Command::IncrByFloat(key, increment))
+}
+
+fn parse_decrement(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    let key = body
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage decr <key>"))?
+        .to_string();
+
+    Ok(Command::Decr(key))
+}
+
+fn parse_decrement_by(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    let key = body
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage incrby <key> <decrement>"))?
+        .to_string();
+
+    let decrement = body
+        .get(1)
+        .ok_or_else(|| anyhow::anyhow!("usage incrby <key> <decrement>"))?;
+    let decrement = str::parse::<i64>(decrement).map_err(|e| {
+        anyhow::anyhow!("ERR value is not an integer or out of range")
+            .context(format!("Unable to parse as u64: {}", e))
+    })?;
+
+    Ok(Command::DecrBy(key, decrement))
+}
+
+fn parse_delete(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    if body.is_empty() {
+        anyhow::bail!("usage del <key> [key ...]")
+    }
+
+    let keys = body.iter().map(|k| k.to_string()).collect();
+
+    Ok(Command::Del(keys))
+}
+
+fn parse_get_delete(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    let key = body
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage getdel <key>"))?
+        .to_string();
+
+    Ok(Command::GetDel(key))
 }
