@@ -2,13 +2,29 @@ use std::{fmt::Display, time::Duration};
 
 use anyhow::Context;
 
-use crate::data::{DatabaseItem, RedisStreamItem};
+use crate::{data::RedisStreamItem, utils::current_unix_timestamp};
+
+#[derive(Debug)]
+pub struct SetCommand {
+    pub key: String,
+    pub value: String,
+    pub get_old_value: bool,
+    pub overwrite: bool,
+    pub expires: SetCommandExpires,
+}
+
+#[derive(Debug)]
+pub enum SetCommandExpires {
+    None,
+    Expiry(Duration),
+    KeepOldExpiry,
+}
 
 #[derive(Debug)]
 pub enum Command {
     Ping(Option<String>),
     Echo(String),
-    Set(String, DatabaseItem),
+    Set(SetCommand),
     Get(String),
     Del(Vec<String>),
     GetDel(String),
@@ -175,41 +191,89 @@ fn parse_echo(body: Vec<String>) -> Result<Command, anyhow::Error> {
 }
 
 fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
-    let key = body
-        .first()
+    let mut body_iter = body.iter();
+    let key = body_iter
+        .next()
         .ok_or_else(|| anyhow::anyhow!("missing key for SET command"))?
         .clone();
 
-    let value = body
-        .get(1)
+    let value = body_iter
+        .next()
         .ok_or_else(|| anyhow::anyhow!("missing value for SET command"))?
         .clone();
 
-    let duration = parse_expiry(body)?;
+    let mut overwrite = true;
+    let mut get_old_value = false;
+    let mut expires = SetCommandExpires::None;
 
-    let item = DatabaseItem::new(value, duration);
+    while let Some(item) = body_iter.next() {
+        match item.to_ascii_lowercase().as_str() {
+            "xx" => overwrite = true,
+            "nx" => overwrite = false,
+            "get" => get_old_value = true,
+            "ex" => {
+                let amount = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                let duration = parse_expiry(amount, 1000)?;
+                expires = SetCommandExpires::Expiry(duration);
+            }
+            "px" => {
+                let amount = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                let duration = parse_expiry(amount, 1)?;
+                expires = SetCommandExpires::Expiry(duration);
+            }
+            "exat" => {
+                let time = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                let duration = parse_expiry_at(time, 1000)?;
+                expires = SetCommandExpires::Expiry(duration);
+            }
+            "pxat" => {
+                let time = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                let duration = parse_expiry_at(time, 1)?;
+                expires = SetCommandExpires::Expiry(duration);
+            }
+            "keepttl" => expires = SetCommandExpires::KeepOldExpiry,
+            _ => anyhow::bail!("unknown option: {}", item),
+        }
+    }
 
-    Ok(Command::Set(key, item))
+    let command = SetCommand {
+        key,
+        value,
+        get_old_value,
+        overwrite,
+        expires,
+    };
+
+    Ok(Command::Set(command))
 }
 
-/// TODO: Add all set commands
-/// See: https://redis.io/commands/set/
-fn parse_expiry(body: Vec<String>) -> Result<Option<Duration>, anyhow::Error> {
-    let px = body.get(2);
-    if px.is_none() || px.unwrap().to_ascii_lowercase().as_str() != "px" {
-        return Ok(None);
-    }
+fn parse_expiry(amount: &str, multiplier: u64) -> Result<Duration, anyhow::Error> {
+    let amount = str::parse::<u64>(amount).context("Parsing amount into number")?;
+    Ok(Duration::from_millis(amount * multiplier))
+}
 
-    let expiry = body.get(3);
+fn parse_expiry_at(time: &str, multiplier: u64) -> Result<Duration, anyhow::Error> {
+    let time = str::parse::<u64>(time)
+        .context("Parsing time into number")?
+        .checked_mul(multiplier)
+        .ok_or_else(|| anyhow::anyhow!("time is too large"))?;
+    let current_timestamp = current_unix_timestamp()? as u64;
 
-    if expiry.is_none() {
-        anyhow::bail!("missing expiry for SET command")
-    }
+    let duration = time
+        .checked_sub(current_timestamp)
+        .ok_or_else(|| anyhow::anyhow!("time is in the past"))?;
 
-    let duration = str::parse(expiry.unwrap()).context("Parsing expiry into number")?;
     let duration = Duration::from_millis(duration);
 
-    Ok(Some(duration))
+    Ok(duration)
 }
 
 fn parse_get(body: Vec<String>) -> Result<Command, anyhow::Error> {

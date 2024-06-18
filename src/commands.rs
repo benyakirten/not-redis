@@ -4,7 +4,7 @@ use tokio::sync::broadcast::{Receiver, Sender};
 
 use crate::{
     data, encoding,
-    request::{self, XAddCommand, XRangeCommand, XReadCommand},
+    request::{self, SetCommand, XAddCommand, XRangeCommand, XReadCommand},
     server, transmission,
 };
 
@@ -94,12 +94,17 @@ pub fn replica_confirm(
 
 pub fn set_value(
     database: &data::Database,
-    key: String,
-    value: data::DatabaseItem,
+    set_command: SetCommand,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    database.set(key, value);
+    let result = database.set_value(
+        set_command.key,
+        set_command.value,
+        set_command.get_old_value,
+        set_command.overwrite,
+        set_command.expires,
+    )?;
 
-    let response = encoding::okay_string().as_bytes().to_vec();
+    let response = result.as_bytes().to_vec();
     let response = vec![response];
 
     Ok(response)

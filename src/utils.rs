@@ -1,4 +1,7 @@
-use std::io::{Cursor, ErrorKind, Read};
+use std::{
+    io::{Cursor, ErrorKind, Read},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use bytes::Buf;
 
@@ -71,4 +74,13 @@ pub fn read_next_byte(cursor: &mut Cursor<Vec<u8>>) -> Result<u8, anyhow::Error>
     cursor.read_exact(&mut byte)?;
     let byte = byte[0];
     Ok(byte)
+}
+
+pub fn current_unix_timestamp() -> Result<u128, anyhow::Error> {
+    let ms_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| anyhow::anyhow!(e))?
+        .as_millis();
+
+    Ok(ms_time)
 }

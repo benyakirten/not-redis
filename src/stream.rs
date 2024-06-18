@@ -50,7 +50,7 @@ pub async fn handle_stream(
             request::Command::Ping(body) => commands::pong(body),
             request::Command::Echo(body) => commands::echo_response(body),
             request::Command::Get(key) => commands::get_value(&database, key),
-            request::Command::Set(key, value) => commands::set_value(&database, key, value),
+            request::Command::Set(set_command) => commands::set_value(&database, set_command),
             request::Command::Del(keys) => commands::delete_keys(&database, keys),
             request::Command::GetDel(key) => commands::get_delete_key(&database, key),
             request::Command::Info => commands::get_info(&server).await,
@@ -125,8 +125,8 @@ pub async fn handle_replica_stream(
 
             match request {
                 request::Command::Get(key) => commands::get_value(&database, key).map(|_| ()),
-                request::Command::Set(key, value) => {
-                    commands::set_value(&database, key, value).map(|_| ())
+                request::Command::Set(command) => {
+                    commands::set_value(&database, command).map(|_| ())
                 }
                 request::Command::Wait(..) => {
                     let response = encoding::okay_string().as_bytes().to_vec();

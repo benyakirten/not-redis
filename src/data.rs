@@ -7,8 +7,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
-use crate::request;
+use crate::encoding::{empty_string, okay_string};
+use crate::request::{self, SetCommandExpires};
+use crate::utils::current_unix_timestamp;
 use crate::{encoding, transmission, utils};
 
 // https://rdb.fnordig.de/file_format.html
@@ -107,26 +111,78 @@ impl Database {
         database.get(key).map(|v| v.data.data_type())
     }
 
-    pub fn set(&self, key: String, value: DatabaseItem) -> Option<String> {
+    pub fn set(&self, key: String, value: DatabaseItem) -> Result<Option<String>, anyhow::Error> {
         let duration = value.duration;
 
         let item = self
             .0
             .write()
-            .unwrap()
-            .insert(key.to_string(), value)
-            .map(|v| v.data);
+            .map_err(|e| anyhow::anyhow!("{}", e))?
+            .insert(key.to_string(), value);
 
         if let Some(dur) = duration {
             let database = self.clone();
             let key = key.to_string();
-            tokio::spawn(async move {
-                tokio::time::sleep(dur).await;
+            let join_handle = tokio::spawn(async move {
+                sleep(dur).await;
                 database.remove(&key);
             });
+            if let Some(item) = item {
+                item.set_cancellation(join_handle);
+            }
         };
 
-        item.map(|i| i.data())
+        Ok(item.map(|i| i.data.data()))
+    }
+
+    pub fn set_value(
+        &self,
+        key: String,
+        value: String,
+        return_old_value: bool,
+        overwrites: bool,
+        expires: SetCommandExpires,
+    ) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        let item = db.get(&key);
+
+        let return_data = if return_old_value {
+            item.map(|i| i.data.data())
+                .unwrap_or_else(|| empty_string())
+        } else {
+            okay_string()
+        };
+
+        let duration = match expires {
+            SetCommandExpires::None => None,
+            SetCommandExpires::KeepOldExpiry => {
+                if let Some(i) = item {
+                    i.duration
+                } else {
+                    None
+                }
+            }
+            SetCommandExpires::Expiry(duration) => Some(duration),
+        };
+
+        match (overwrites, item.is_some()) {
+            (true, _) | (_, false) => {
+                let value = DatabaseItem::new(value, duration);
+                db.insert(key.to_string(), value);
+                // TODO: Cancel old cancellation process
+                if let Some(dur) = duration {
+                    let database = self.clone();
+                    tokio::spawn(async move {
+                        sleep(dur).await;
+                        database.remove(&key);
+                    });
+                };
+            }
+            _ => {}
+        };
+
+        Ok(return_data)
     }
 
     pub fn add_stream(
@@ -137,10 +193,7 @@ impl Database {
         let mut database = self.0.write().unwrap();
 
         let ms_time = match command.ms_time {
-            request::XAddNumber::Autogenerate => SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| anyhow::anyhow!(e))?
-                .as_millis(),
+            request::XAddNumber::Autogenerate => current_unix_timestamp()?,
             request::XAddNumber::Predetermined(val) => val as u128,
         };
 
@@ -461,22 +514,20 @@ impl Database {
                 OpCode::ResizeDb => parse_resize_db(&mut cursor)?,
                 OpCode::ExpireTimeMS => {
                     let database_item = parse_expire_time_ms(&mut cursor)?;
-                    if database_item.is_some() {
-                        let (key, value) = database_item.unwrap();
-                        database.set(key, value);
+                    if let Some((key, value)) = database_item {
+                        database.set(key, value)?;
                     }
                 }
                 OpCode::ExpireTime => {
                     let database_item = parse_expire_time_sec(&mut cursor)?;
-                    if database_item.is_some() {
-                        let (key, value) = database_item.unwrap();
-                        database.set(key, value);
+                    if let Some((key, value)) = database_item {
+                        database.set(key, value)?;
                     }
                 }
                 OpCode::Other(value_type_byte) => {
                     let value_type = ValueType::from_byte(value_type_byte)?;
                     let (key, value) = read_key_value_pair(value_type, None, &mut cursor)?;
-                    database.set(key, value);
+                    database.set(key, value)?;
                 }
                 OpCode::Eof => break,
             }
@@ -496,6 +547,7 @@ impl Clone for Database {
 pub struct DatabaseItem {
     data: RedisData,
     duration: Option<Duration>,
+    cancellation_process: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug)]
@@ -537,7 +589,12 @@ impl DatabaseItem {
         Self {
             data: redis_data,
             duration,
+            cancellation_process: None,
         }
+    }
+
+    pub fn set_cancellation(&mut self, process: JoinHandle<()>) {
+        self.cancellation_process = Some(process);
     }
 }
 
