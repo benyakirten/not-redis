@@ -108,10 +108,10 @@ impl Database {
 
     pub fn get_type(&self, key: &str) -> Option<String> {
         let database = self.0.read().unwrap();
-        database.get(key).map(|v| v.data.data_type())
+        database.get(key).map(|v| v.data_type())
     }
 
-    pub fn set(&self, key: String, value: DatabaseItem) -> Result<Option<String>, anyhow::Error> {
+    pub fn set(&self, key: String, value: RedisString) -> Result<Option<String>, anyhow::Error> {
         let duration = value.duration;
 
         let item = self
@@ -120,6 +120,8 @@ impl Database {
             .map_err(|e| anyhow::anyhow!("{}", e))?
             .insert(key.to_string(), value);
 
+        let return_value = item.as_ref().map(|i| i.data.data());
+
         if let Some(dur) = duration {
             let database = self.clone();
             let key = key.to_string();
@@ -127,12 +129,12 @@ impl Database {
                 sleep(dur).await;
                 database.remove(&key);
             });
-            if let Some(item) = item {
+            if let Some(mut item) = item {
                 item.set_cancellation(join_handle);
             }
         };
 
-        Ok(item.map(|i| i.data.data()))
+        Ok(return_value)
     }
 
     pub fn set_value(
@@ -236,8 +238,8 @@ impl Database {
 
                 Ok(stream_id)
             }
-            Some(database_item) => match database_item.data {
-                RedisData::Stream(ref mut existing_stream) => {
+            Some(database_item) => match database_item {
+                DatabaseItem::Stream(ref mut existing_stream) => {
                     let latest_inner = existing_stream.0.last().ok_or_else(|| {
                         anyhow::anyhow!("Streams should always have at lest one datapoint")
                     })?;
@@ -307,9 +309,9 @@ impl Database {
         let database = self.0.read().unwrap();
         let stream = match database.get(&key) {
             None => anyhow::bail!("No stream found at {}", key),
-            Some(item) => match &item.data {
-                RedisData::String(..) => anyhow::bail!("No stream found at {}", key),
-                RedisData::Stream(stream) => stream,
+            Some(item) => match &item {
+                DatabaseItem::String(..) => anyhow::bail!("No stream found at {}", key),
+                DatabaseItem::Stream(stream) => stream,
             },
         };
 
@@ -382,9 +384,26 @@ impl Database {
         self.0.write().unwrap().remove(key).is_none()
     }
 
-    pub fn get_remove(&self, key: &str) -> Option<String> {
+    pub fn get_remove(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
         let mut db = self.0.write().unwrap();
-        db.remove(key).map(|v| v.data.data())
+        let item = db.get(key);
+
+        if item.is_none() {
+            return Ok(None);
+        }
+
+        let item = item.unwrap();
+        match item {
+            DatabaseItem::String(item) => {
+                if let Some(process) = item.cancellation_process {
+                    process.abort();
+                }
+                let result = db.remove(key);
+                let result = result.map(|_| item.data());
+                Ok(result)
+            }
+            _ => anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value"),
+        }
     }
 
     pub fn remove_multiple(&self, keys: Vec<String>) -> usize {
@@ -544,15 +563,35 @@ impl Clone for Database {
 }
 
 #[derive(Debug)]
-pub struct DatabaseItem {
-    data: RedisData,
+pub struct RedisString {
+    data: String,
+    data_type: RedisStringDataType,
     duration: Option<Duration>,
     cancellation_process: Option<JoinHandle<()>>,
 }
 
+impl RedisString {
+    pub fn new(data: String, duration: Option<Duration>) -> Self {
+        Self {
+            data,
+            data_type: RedisStringDataType::String,
+            duration,
+            cancellation_process: None,
+        }
+    }
+
+    pub fn data(&self) -> String {
+        encoding::bulk_string(&self.data)
+    }
+
+    pub fn set_cancellation(&mut self, process: JoinHandle<()>) {
+        self.cancellation_process = Some(process);
+    }
+}
+
 #[derive(Debug)]
-pub enum RedisData {
-    String(String, RedisStringDataType),
+pub enum DatabaseItem {
+    String(RedisString),
     Stream(RedisStream),
 }
 
@@ -562,51 +601,13 @@ pub enum RedisStringDataType {
     Float,
 }
 
-impl RedisData {
+impl DatabaseItem {
     pub fn data_type(&self) -> String {
         let data_type = match self {
-            RedisData::String(..) => "string",
-            RedisData::Stream(_) => "stream",
+            DatabaseItem::String(_) => "string",
+            DatabaseItem::Stream(_) => "stream",
         };
         encoding::bulk_string(data_type)
-    }
-
-    pub fn data(&self) -> String {
-        match self {
-            RedisData::String(data, _) => encoding::bulk_string(data),
-            RedisData::Stream(_data) => todo!(),
-        }
-    }
-}
-
-pub trait Encode {
-    fn encode(self) -> RedisData;
-}
-
-impl DatabaseItem {
-    pub fn new<Data: Encode>(data: Data, duration: Option<Duration>) -> Self {
-        let redis_data = data.encode();
-        Self {
-            data: redis_data,
-            duration,
-            cancellation_process: None,
-        }
-    }
-
-    pub fn set_cancellation(&mut self, process: JoinHandle<()>) {
-        self.cancellation_process = Some(process);
-    }
-}
-
-impl Encode for String {
-    fn encode(self) -> RedisData {
-        RedisData::String(self, RedisStringDataType::String)
-    }
-}
-
-impl Encode for RedisStream {
-    fn encode(self) -> RedisData {
-        RedisData::Stream(self)
     }
 }
 
@@ -914,7 +915,7 @@ fn read_streams_sync(
             anyhow::anyhow!("No stream found for item at key {}", &command_stream.key)
         })?;
         let stream = match &item.data {
-            RedisData::Stream(stream) => stream,
+            DatabaseItem::Stream(stream) => stream,
             _ => {
                 anyhow::bail!("Item at key {} is not a stream", &command_stream.key);
             }
