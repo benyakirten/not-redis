@@ -151,7 +151,7 @@ impl Command {
             "xread" => parse_xread(body),
             "incr" => parse_increment(body),
             "incrby" => parse_increment_by(body),
-            "Incrbyfloat" => parse_increment_by_float(body),
+            "incrbyfloat" => parse_increment_by_float(body),
             "decr" => parse_decrement(body),
             "decrby" => parse_decrement_by(body),
             _ => anyhow::bail!("unknown command: {}", route),

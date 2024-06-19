@@ -465,11 +465,10 @@ impl Database {
         let value = match db.get_mut(key) {
             Some(item) => match item {
                 DatabaseItem::String(redis_string) => {
-                    let value = match redis_string.data_type {
-                        RedisStringDataType::Float => {
-                            adjust_float_value_by_int(&redis_string.data, adjustment)
-                        }
-                        _ => adjust_int_value_by_int(&redis_string.data, adjustment),
+                    let value = if let Some(_) = redis_string.data.find('.') {
+                        adjust_float_value_by_int(&redis_string.data, adjustment)
+                    } else {
+                        adjust_int_value_by_int(&redis_string.data, adjustment)
                     }?;
 
                     redis_string.data = value.clone();
@@ -500,15 +499,13 @@ impl Database {
         let value = match db.get_mut(key) {
             Some(item) => match item {
                 DatabaseItem::String(redis_string) => {
-                    let value = match redis_string.data_type {
-                        RedisStringDataType::Float => {
-                            adjust_float_value_by_float(&redis_string.data, adjustment)
-                        }
-                        _ => adjust_int_value_by_float(&redis_string.data, adjustment),
+                    let value = if let Some(_) = redis_string.data.find('.') {
+                        adjust_float_value_by_float(&redis_string.data, adjustment)
+                    } else {
+                        adjust_int_value_by_float(&redis_string.data, adjustment)
                     }?;
 
                     redis_string.data = value.clone();
-                    redis_string.data_type = RedisStringDataType::Float;
 
                     Ok(value)
                 }
@@ -608,7 +605,6 @@ impl Clone for Database {
 #[derive(Debug)]
 pub struct RedisString {
     data: String,
-    data_type: RedisStringDataType,
     duration: Option<Duration>,
     cancellation_process: Option<JoinHandle<()>>,
 }
@@ -617,7 +613,6 @@ impl RedisString {
     pub fn new(data: String, duration: Option<Duration>) -> Self {
         Self {
             data,
-            data_type: RedisStringDataType::String,
             duration,
             cancellation_process: None,
         }
@@ -636,12 +631,6 @@ impl RedisString {
 pub enum DatabaseItem {
     String(RedisString),
     Stream(RedisStream),
-}
-
-#[derive(Debug)]
-pub enum RedisStringDataType {
-    String,
-    Float,
 }
 
 impl DatabaseItem {
