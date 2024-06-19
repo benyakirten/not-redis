@@ -10,8 +10,15 @@ pub struct SetCommand {
     pub key: String,
     pub value: String,
     pub get_old_value: bool,
-    pub overwrite: bool,
+    pub overwrite: SetOverride,
     pub expires: CommandExpiration,
+}
+
+#[derive(Debug)]
+pub enum SetOverride {
+    Normal,
+    NeverOverwrite,
+    OnlyOverwrite,
 }
 
 #[derive(Debug)]
@@ -205,14 +212,14 @@ fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
         .ok_or_else(|| anyhow::anyhow!("missing value for SET command"))?
         .clone();
 
-    let mut overwrite = true;
+    let mut overwrite = SetOverride::Normal;
     let mut get_old_value = false;
     let mut expires = CommandExpiration::None;
 
     while let Some(item) = body_iter.next() {
         match item.to_ascii_lowercase().as_str() {
-            "xx" => overwrite = true,
-            "nx" => overwrite = false,
+            "xx" => overwrite = SetOverride::OnlyOverwrite,
+            "nx" => overwrite = SetOverride::NeverOverwrite,
             "get" => get_old_value = true,
             "ex" => {
                 let amount = body_iter

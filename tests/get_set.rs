@@ -87,22 +87,140 @@ async fn set_get_string_with_expiry() {
     assert_eq!(resp, empty_string());
 }
 
-// #[tokio::test]
-// async fn getdel_gets_then_deletes_key() {
-//     todo!()
-// }
+#[tokio::test]
+async fn getdel_gets_then_deletes_key() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
 
-// #[tokio::test]
-// async fn set_overwrites_expiration_time() {
-//     todo!()
-// }
+    let message = encode_string("set foo bar px 500");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("getdel foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, bulk_string("bar"));
+
+    let message = encode_string("get foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, empty_string());
+
+    let message = encode_string("set foo bar");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    sleep(Duration::from_millis(500)).await;
+
+    let message = encode_string("get foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, bulk_string("bar"));
+}
+
+#[tokio::test]
+async fn set_overwrites_expiration_time() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo bar px 200");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("set foo baz");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    sleep(Duration::from_millis(300)).await;
+
+    let message = encode_string("get foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, bulk_string("baz"));
+}
+
+#[tokio::test]
+async fn set_keepttl_does_not_overwrite_expiration_time() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo bar px 500");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("set foo baz keepttl");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    sleep(Duration::from_millis(500)).await;
+
+    let message = encode_string("get foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, empty_string());
+}
+
+#[tokio::test]
+async fn set_no_overwrite_value_keeps_value_changes_expiration() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo bar px 300");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("set foo baz nx");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    sleep(Duration::from_millis(500)).await;
+
+    let message = encode_string("get foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, bulk_string("bar"));
+}
+
+#[tokio::test]
+async fn set_get_previous_value() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo bar");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("set foo baz get");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, bulk_string("bar"));
+}
 
 // #[tokio::test]
 // async fn del_removes_item_stops_expiration() {
-//     todo!()
+//     let test_app = TestApp::master().await;
+// let address = test_app.address.name();
 // }
 
 // #[tokio::test]
 // async fn getex_changes_item_expiration() {
-//     todo!()
+//     let test_app = TestApp::master().await;
+// let address = test_app.address.name();
+// }
+
+// #[tokio::test]
+// async fn incr_decr_num_string() {
+//     let test_app = TestApp::master().await;
+//     let address = test_app.address.name();
+// }
+
+// #[tokio::test]
+// async fn incr_decr_non_number_string() {
+//     let test_app = TestApp::master().await;
+//     let address = test_app.address.name();
+
+//     let message = encode_string("set foo bar");
+//     let resp = send_message(&address, &message).await;
+//     assert_eq!(resp, simple_string("OK"));
+
+//     let message = encode_string("incr foo");
+//     let resp = send_message(&address, &message).await;
+//     assert_eq!(resp, simple_string("ERR value is not an integer or out of range"));
+
+//     let message = encode_string("decr foo");
+//     let resp = send_message(&address, &message).await;
+//     assert_eq!(resp, simple_string("ERR value is not an integer or out of range"));
 // }
