@@ -487,7 +487,7 @@ impl Database {
             }
         }?;
 
-        Ok(value)
+        Ok(encoding::bulk_string(&value))
     }
 
     pub fn adjust_value_by_float(
@@ -521,7 +521,7 @@ impl Database {
             }
         }?;
 
-        Ok(value)
+        Ok(encoding::bulk_string(&value))
     }
 
     pub fn keys(&self) -> Result<Vec<String>, anyhow::Error> {
