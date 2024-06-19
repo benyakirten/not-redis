@@ -496,7 +496,17 @@ impl Database {
     pub fn remove_multiple(&self, keys: Vec<String>) -> usize {
         let mut db = self.0.write().unwrap();
         keys.iter().fold(0, |acc, key| {
-            if db.remove(key).is_some() {
+            if let Some(item) = db.get(key) {
+                match item {
+                    DatabaseItem::String(item) => {
+                        if let Some(process) = &item.cancellation_process {
+                            process.abort();
+                        }
+                    }
+                    _ => {}
+                }
+
+                db.remove(key);
                 acc + 1
             } else {
                 acc
