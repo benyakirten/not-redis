@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use crate::encoding::{empty_string, okay_string};
-use crate::request::{self, CommandExpiration};
+use crate::request::{self, CommandExpiration, SetOverride};
 use crate::utils::current_unix_timestamp;
 use crate::{encoding, transmission, utils};
 
@@ -166,12 +166,12 @@ impl Database {
         key: String,
         value: String,
         return_old_value: bool,
-        overwrites: bool,
+        overwrites: SetOverride,
         expires: CommandExpiration,
     ) -> Result<String, anyhow::Error> {
         let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let item = db.get(&key);
+        let item = db.get_mut(&key);
         let item = match item {
             Some(DatabaseItem::Stream(_)) => {
                 anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
@@ -181,7 +181,9 @@ impl Database {
         };
 
         let return_data = if return_old_value {
-            item.map(|i| i.data()).unwrap_or_else(|| empty_string())
+            item.as_ref()
+                .map(|i| i.data())
+                .unwrap_or_else(|| empty_string())
         } else {
             okay_string()
         };
@@ -189,7 +191,7 @@ impl Database {
         let duration = match expires {
             CommandExpiration::None => None,
             CommandExpiration::Other => {
-                if let Some(i) = item {
+                if let Some(i) = &item {
                     i.duration
                 } else {
                     None
@@ -199,14 +201,14 @@ impl Database {
         };
 
         match (overwrites, item.is_some()) {
-            (true, _) | (_, false) => {
+            (SetOverride::Normal, _)
+            | (SetOverride::OnlyOverwrite, true)
+            | (SetOverride::NeverOverwrite, false) => {
                 let mut value = RedisString::new(value, duration);
                 // TODO: Cancel old cancellation process
 
                 if let Some(item) = item {
-                    if let Some(process) = &item.cancellation_process {
-                        process.abort();
-                    }
+                    item.abort_deletion_process();
                 }
 
                 if let Some(dur) = duration {
@@ -221,6 +223,22 @@ impl Database {
                 };
 
                 db.insert(key.to_string(), DatabaseItem::String(value));
+            }
+            (_, true) => {
+                let item = item.unwrap();
+
+                item.abort_deletion_process();
+
+                if let Some(dur) = duration {
+                    let database = self.clone();
+                    let key_copy = key.clone();
+                    let process = tokio::spawn(async move {
+                        sleep(dur).await;
+                        database.remove(&key_copy);
+                    });
+
+                    item.set_cancellation(process);
+                };
             }
             _ => {}
         };
@@ -437,9 +455,7 @@ impl Database {
                 DatabaseItem::String(item) => {
                     let data = item.data();
 
-                    if let Some(process) = &item.cancellation_process {
-                        process.abort();
-                    }
+                    item.abort_deletion_process();
 
                     let duration = match expiration {
                         CommandExpiration::None => None,
@@ -472,14 +488,12 @@ impl Database {
     pub fn get_remove(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
         let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        if let Some(item) = db.get(key) {
+        if let Some(item) = db.get_mut(key) {
             match item {
                 DatabaseItem::String(item) => {
                     let data = item.data();
 
-                    if let Some(process) = &item.cancellation_process {
-                        process.abort();
-                    }
+                    item.abort_deletion_process();
 
                     db.remove(key);
                     Ok(Some(data))
@@ -678,6 +692,13 @@ impl RedisString {
 
     pub fn set_cancellation(&mut self, process: JoinHandle<()>) {
         self.cancellation_process = Some(process);
+    }
+
+    pub fn abort_deletion_process(&mut self) {
+        if let Some(process) = &self.cancellation_process {
+            process.abort();
+            self.cancellation_process = None;
+        }
     }
 }
 
