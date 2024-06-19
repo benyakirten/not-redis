@@ -1,4 +1,5 @@
-use std::{fmt::Display, time::Duration};
+use std::fmt::Display;
+use std::time::Duration;
 
 use anyhow::Context;
 
@@ -10,14 +11,14 @@ pub struct SetCommand {
     pub value: String,
     pub get_old_value: bool,
     pub overwrite: bool,
-    pub expires: SetCommandExpires,
+    pub expires: CommandExpiration,
 }
 
 #[derive(Debug)]
-pub enum SetCommandExpires {
+pub enum CommandExpiration {
     None,
     Expiry(Duration),
-    KeepOldExpiry,
+    Other,
 }
 
 #[derive(Debug)]
@@ -26,8 +27,9 @@ pub enum Command {
     Echo(String),
     Set(SetCommand),
     Get(String),
-    Del(Vec<String>),
     GetDel(String),
+    GetEx(String, CommandExpiration),
+    Del(Vec<String>),
     Info,
     ReplConf(ReplicationCommand),
     Psync(String, PsyncOffset),
@@ -137,8 +139,9 @@ impl Command {
             "echo" => parse_echo(body),
             "set" => parse_set(body),
             "get" => parse_get(body),
-            "del" => parse_delete(body),
             "getdel" => parse_get_delete(body),
+            "getex" => parse_getex(body),
+            "del" => parse_delete(body),
             "info" => parse_info(body),
             "replconf" => parse_replconf(body),
             "psync" => parse_psync(body),
@@ -204,7 +207,7 @@ fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
 
     let mut overwrite = true;
     let mut get_old_value = false;
-    let mut expires = SetCommandExpires::None;
+    let mut expires = CommandExpiration::None;
 
     while let Some(item) = body_iter.next() {
         match item.to_ascii_lowercase().as_str() {
@@ -216,30 +219,30 @@ fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
                 let duration = parse_expiry(amount, 1000)?;
-                expires = SetCommandExpires::Expiry(duration);
+                expires = CommandExpiration::Expiry(duration);
             }
             "px" => {
                 let amount = body_iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
                 let duration = parse_expiry(amount, 1)?;
-                expires = SetCommandExpires::Expiry(duration);
+                expires = CommandExpiration::Expiry(duration);
             }
             "exat" => {
                 let time = body_iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
                 let duration = parse_expiry_at(time, 1000)?;
-                expires = SetCommandExpires::Expiry(duration);
+                expires = CommandExpiration::Expiry(duration);
             }
             "pxat" => {
                 let time = body_iter
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
                 let duration = parse_expiry_at(time, 1)?;
-                expires = SetCommandExpires::Expiry(duration);
+                expires = CommandExpiration::Expiry(duration);
             }
-            "keepttl" => expires = SetCommandExpires::KeepOldExpiry,
+            "keepttl" => expires = CommandExpiration::Other,
             _ => anyhow::bail!("unknown option: {}", item),
         }
     }
@@ -677,4 +680,58 @@ fn parse_get_delete(body: Vec<String>) -> Result<Command, anyhow::Error> {
         .to_string();
 
     Ok(Command::GetDel(key))
+}
+
+fn parse_getex(body: Vec<String>) -> Result<Command, anyhow::Error> {
+    let mut body_iter = body.iter();
+
+    let key = body_iter
+        .next()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds |
+      PXAT unix-time-milliseconds | PERSIST]"
+            )
+        })?
+        .to_string();
+
+    let mut expires: CommandExpiration = CommandExpiration::None;
+
+    if let Some(item) = body_iter.next() {
+        match item.to_ascii_lowercase().as_str() {
+            "ex" => {
+                let amount = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                let duration = parse_expiry(amount, 1000)?;
+                expires = CommandExpiration::Expiry(duration);
+            }
+            "px" => {
+                let amount = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                let duration = parse_expiry(amount, 1)?;
+                expires = CommandExpiration::Expiry(duration);
+            }
+            "exat" => {
+                let time = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                let duration = parse_expiry_at(time, 1000)?;
+                expires = CommandExpiration::Expiry(duration);
+            }
+            "pxat" => {
+                let time = body_iter
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                let duration = parse_expiry_at(time, 1)?;
+                expires = CommandExpiration::Expiry(duration);
+            }
+            "persist" => expires = CommandExpiration::Other,
+            other => anyhow::bail!("unknown option: {}", other),
+        }
+    }
+
+    let command = Command::GetEx(key, expires);
+    Ok(command)
 }

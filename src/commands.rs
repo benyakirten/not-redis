@@ -4,7 +4,7 @@ use tokio::sync::broadcast::{Receiver, Sender};
 
 use crate::{
     data, encoding,
-    request::{self, SetCommand, XAddCommand, XRangeCommand, XReadCommand},
+    request::{self, CommandExpiration, SetCommand, XAddCommand, XRangeCommand, XReadCommand},
     server, transmission,
 };
 
@@ -117,6 +117,18 @@ pub fn delete_keys(
     let count = database.remove_multiple(keys);
 
     let response = encoding::encode_integer(count).as_bytes().to_vec();
+    let response = vec![response];
+
+    Ok(response)
+}
+
+pub fn update_expiration(
+    database: &data::Database,
+    key: String,
+    expiration: CommandExpiration,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let response = database.update_expiration(&key, expiration)?;
+    let response = response.as_bytes().to_vec();
     let response = vec![response];
 
     Ok(response)

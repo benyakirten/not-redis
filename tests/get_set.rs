@@ -1,3 +1,5 @@
+use tokio::time::{sleep, Duration};
+
 use common::{encode_string, send_message, TestApp};
 use not_redis::encoding::{bulk_string, empty_string, encode_string_array, simple_string};
 
@@ -78,9 +80,29 @@ async fn set_get_string_with_expiry() {
     let resp = send_message(&test_app.address.name(), &message).await;
     assert_eq!(resp, bulk_string("bar"));
 
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(100)).await;
 
     let message = encode_string("get foo");
     let resp = send_message(&test_app.address.name(), &message).await;
     assert_eq!(resp, empty_string());
 }
+
+// #[tokio::test]
+// async fn getdel_gets_then_deletes_key() {
+//     todo!()
+// }
+
+// #[tokio::test]
+// async fn set_overwrites_expiration_time() {
+//     todo!()
+// }
+
+// #[tokio::test]
+// async fn del_removes_item_stops_expiration() {
+//     todo!()
+// }
+
+// #[tokio::test]
+// async fn getex_changes_item_expiration() {
+//     todo!()
+// }

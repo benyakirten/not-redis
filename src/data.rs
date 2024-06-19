@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
 use crate::encoding::{empty_string, okay_string};
-use crate::request::{self, SetCommandExpires};
+use crate::request::{self, CommandExpiration};
 use crate::utils::current_unix_timestamp;
 use crate::{encoding, transmission, utils};
 
@@ -167,7 +167,7 @@ impl Database {
         value: String,
         return_old_value: bool,
         overwrites: bool,
-        expires: SetCommandExpires,
+        expires: CommandExpiration,
     ) -> Result<String, anyhow::Error> {
         let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
 
@@ -187,15 +187,15 @@ impl Database {
         };
 
         let duration = match expires {
-            SetCommandExpires::None => None,
-            SetCommandExpires::KeepOldExpiry => {
+            CommandExpiration::None => None,
+            CommandExpiration::Other => {
                 if let Some(i) = item {
                     i.duration
                 } else {
                     None
                 }
             }
-            SetCommandExpires::Expiry(duration) => Some(duration),
+            CommandExpiration::Expiry(duration) => Some(duration),
         };
 
         match (overwrites, item.is_some()) {
@@ -423,6 +423,50 @@ impl Database {
 
     pub fn remove(&self, key: &str) -> bool {
         self.0.write().unwrap().remove(key).is_none()
+    }
+
+    pub fn update_expiration(
+        &self,
+        key: &str,
+        expiration: CommandExpiration,
+    ) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        if let Some(item) = db.get_mut(key) {
+            match item {
+                DatabaseItem::String(item) => {
+                    let data = item.data();
+
+                    if let Some(process) = &item.cancellation_process {
+                        process.abort();
+                    }
+
+                    let duration = match expiration {
+                        CommandExpiration::None => None,
+                        CommandExpiration::Other => None,
+                        CommandExpiration::Expiry(duration) => Some(duration),
+                    };
+
+                    if let Some(duration) = duration {
+                        let database = self.clone();
+                        let key = key.to_string();
+                        let join_handle = tokio::spawn(async move {
+                            sleep(duration).await;
+                            database.remove(&key);
+                        });
+
+                        item.set_cancellation(join_handle);
+                    }
+
+                    Ok(data)
+                }
+                _ => anyhow::bail!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                ),
+            }
+        } else {
+            Ok(empty_string())
+        }
     }
 
     pub fn get_remove(&self, key: &str) -> Result<Option<String>, anyhow::Error> {

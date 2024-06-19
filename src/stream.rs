@@ -53,6 +53,9 @@ pub async fn handle_stream(
             request::Command::Set(set_command) => commands::set_value(&database, set_command),
             request::Command::Del(keys) => commands::delete_keys(&database, keys),
             request::Command::GetDel(key) => commands::get_delete_key(&database, key),
+            request::Command::GetEx(key, expiry) => {
+                commands::update_expiration(&database, key, expiry)
+            }
             request::Command::Info => commands::get_info(&server).await,
             request::Command::ReplConf(repl) => commands::replica_confirm(repl, 0),
             request::Command::Psync(..) => commands::perform_psync(&server).await,
