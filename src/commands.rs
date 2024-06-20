@@ -4,7 +4,7 @@ use tokio::sync::broadcast::{Receiver, Sender};
 
 use crate::{
     data, encoding,
-    request::{self, XAddCommand, XRangeCommand, XReadCommand},
+    request::{self, CommandExpiration, SetCommand, XAddCommand, XRangeCommand, XReadCommand},
     server, transmission,
 };
 
@@ -29,7 +29,7 @@ pub fn echo_response(body: String) -> Result<Vec<Vec<u8>>, anyhow::Error> {
 }
 
 pub fn get_value(database: &data::Database, key: String) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let value = database.get(&key);
+    let value = database.get(&key)?;
     let response = match value {
         Some(data) => data,
         None => encoding::empty_string(),
@@ -94,12 +94,58 @@ pub fn replica_confirm(
 
 pub fn set_value(
     database: &data::Database,
-    key: String,
-    value: data::DatabaseItem,
+    set_command: SetCommand,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    database.set(key, value);
+    let result = database.set_value(
+        set_command.key,
+        set_command.value,
+        set_command.get_old_value,
+        set_command.overwrite,
+        set_command.expires,
+    )?;
 
-    let response = encoding::okay_string().as_bytes().to_vec();
+    let response = result.as_bytes().to_vec();
+    let response = vec![response];
+
+    Ok(response)
+}
+
+pub fn delete_keys(
+    database: &data::Database,
+    keys: Vec<String>,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let count = database.remove_multiple(keys);
+
+    let response = encoding::encode_integer(count as i64).as_bytes().to_vec();
+    let response = vec![response];
+
+    Ok(response)
+}
+
+pub fn update_expiration(
+    database: &data::Database,
+    key: String,
+    expiration: CommandExpiration,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let response = database.update_expiration(&key, expiration)?;
+    let response = response.as_bytes().to_vec();
+    let response = vec![response];
+
+    Ok(response)
+}
+
+pub fn get_delete_key(
+    database: &data::Database,
+    key: String,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let value = database.get_remove(&key)?;
+    let response = match value {
+        Some(data) => data,
+        None => encoding::empty_string(),
+    }
+    .as_bytes()
+    .to_vec();
+
     let response = vec![response];
 
     Ok(response)
@@ -111,7 +157,7 @@ pub async fn transmit_wait(
     timeout: u64,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
     let num_respondents = server.perform_wait(num_replicas, timeout).await?;
-    let response = encoding::encode_integer(num_respondents)
+    let response = encoding::encode_integer(num_respondents as i64)
         .as_bytes()
         .to_vec();
     let response = vec![response];
@@ -212,6 +258,38 @@ pub async fn read_streams(
         .await?
         .as_bytes()
         .to_vec();
+
+    let responses = vec![response];
+    Ok(responses)
+}
+
+pub fn increment_value_by_int(
+    database: &data::Database,
+    key: String,
+    adjustment: i64,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let response = match database.adjust_value_by_int(&key, adjustment) {
+        Ok(value) => value,
+        Err(e) => encoding::error_string(&e.to_string()),
+    }
+    .as_bytes()
+    .to_vec();
+
+    let responses = vec![response];
+    Ok(responses)
+}
+
+pub fn increment_value_by_float(
+    database: &data::Database,
+    key: String,
+    adjustment: f64,
+) -> Result<Vec<Vec<u8>>, anyhow::Error> {
+    let response = match database.adjust_value_by_float(&key, adjustment) {
+        Ok(value) => value,
+        Err(e) => encoding::error_string(&e.to_string()),
+    }
+    .as_bytes()
+    .to_vec();
 
     let responses = vec![response];
     Ok(responses)

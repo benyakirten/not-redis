@@ -7,8 +7,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use tokio::sync::broadcast::{Receiver, Sender};
+use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
-use crate::request;
+use crate::encoding::{empty_string, okay_string};
+use crate::request::{self, CommandExpiration, SetOverride};
+use crate::utils::current_unix_timestamp;
 use crate::{encoding, transmission, utils};
 
 // https://rdb.fnordig.de/file_format.html
@@ -97,37 +101,147 @@ impl Database {
         Self(Arc::new(RwLock::new(HashMap::new())))
     }
 
-    pub fn get(&self, key: &str) -> Option<String> {
+    pub fn get(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
         let database = self.0.read().unwrap();
-        database.get(key).map(|v| v.data.data())
+        let item = database.get(key);
+
+        let data = match item {
+            Some(DatabaseItem::Stream(_)) => {
+                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
+            }
+            Some(DatabaseItem::String(redis_string)) => Some(redis_string.data()),
+            None => None,
+        };
+
+        Ok(data)
     }
 
     pub fn get_type(&self, key: &str) -> Option<String> {
         let database = self.0.read().unwrap();
-        database.get(key).map(|v| v.data.data_type())
+        database.get(key).map(|v| v.data_type())
     }
 
-    pub fn set(&self, key: String, value: DatabaseItem) -> Option<String> {
+    pub fn set(&self, key: String, value: RedisString) -> Result<(), anyhow::Error> {
         let duration = value.duration;
+
+        let database_item = DatabaseItem::String(value);
 
         let item = self
             .0
             .write()
-            .unwrap()
-            .insert(key.to_string(), value)
-            .map(|v| v.data);
+            .map_err(|e| anyhow::anyhow!("{}", e))?
+            .insert(key.to_string(), database_item);
 
-        if duration.is_some() {
-            let duration = duration.unwrap();
+        if let Some(dur) = duration {
             let database = self.clone();
             let key = key.to_string();
-            tokio::spawn(async move {
-                tokio::time::sleep(duration).await;
+            let join_handle = tokio::spawn(async move {
+                sleep(dur).await;
                 database.remove(&key);
             });
+            if let Some(item) = item {
+                match item {
+                    DatabaseItem::String(mut redis_string) => {
+                        if let Some(process) = &redis_string.cancellation_process {
+                            process.abort();
+                        }
+                        redis_string.set_cancellation(join_handle);
+                    }
+                    _ => {
+                        unreachable!()
+                    }
+                }
+            }
         };
 
-        item.map(|i| i.data())
+        Ok(())
+    }
+
+    fn set_item(&self, key: String, item: DatabaseItem) -> Option<DatabaseItem> {
+        self.0.write().unwrap().insert(key, item)
+    }
+
+    pub fn set_value(
+        &self,
+        key: String,
+        value: String,
+        return_old_value: bool,
+        overwrites: SetOverride,
+        expires: CommandExpiration,
+    ) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        let item = db.get_mut(&key);
+        let item = match item {
+            Some(DatabaseItem::Stream(_)) => {
+                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
+            }
+            Some(DatabaseItem::String(redis_string)) => Some(redis_string),
+            None => None,
+        };
+
+        let return_data = if return_old_value {
+            item.as_ref().map(|i| i.data()).unwrap_or_else(empty_string)
+        } else {
+            okay_string()
+        };
+
+        let duration = match expires {
+            CommandExpiration::None => None,
+            CommandExpiration::Other => {
+                if let Some(i) = &item {
+                    i.duration
+                } else {
+                    None
+                }
+            }
+            CommandExpiration::Expiry(duration) => Some(duration),
+        };
+
+        match (overwrites, item.is_some()) {
+            (SetOverride::Normal, _)
+            | (SetOverride::OnlyOverwrite, true)
+            | (SetOverride::NeverOverwrite, false) => {
+                let mut value = RedisString::new(value, duration);
+                // TODO: Cancel old cancellation process
+
+                if let Some(item) = item {
+                    item.abort_deletion_process();
+                }
+
+                if let Some(dur) = duration {
+                    let database = self.clone();
+                    let key_copy = key.clone();
+                    let process = tokio::spawn(async move {
+                        sleep(dur).await;
+                        database.remove(&key_copy);
+                    });
+
+                    value.set_cancellation(process);
+                };
+
+                db.insert(key.to_string(), DatabaseItem::String(value));
+            }
+            (_, true) => {
+                let item = item.unwrap();
+
+                item.abort_deletion_process();
+
+                if let Some(dur) = duration {
+                    let database = self.clone();
+                    let key_copy = key.clone();
+                    let process = tokio::spawn(async move {
+                        sleep(dur).await;
+                        database.remove(&key_copy);
+                    });
+
+                    item.set_cancellation(process);
+                };
+            }
+            _ => {}
+        };
+
+        Ok(return_data)
     }
 
     pub fn add_stream(
@@ -138,10 +252,7 @@ impl Database {
         let mut database = self.0.write().unwrap();
 
         let ms_time = match command.ms_time {
-            request::XAddNumber::Autogenerate => SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_err(|e| anyhow::anyhow!(e))?
-                .as_millis(),
+            request::XAddNumber::Autogenerate => current_unix_timestamp()?,
             request::XAddNumber::Predetermined(val) => val as u128,
         };
 
@@ -179,13 +290,13 @@ impl Database {
                 let stream_id = inner_redis_stream.stream_id();
 
                 let redis_stream = RedisStream(vec![inner_redis_stream]);
-                let item = DatabaseItem::new(redis_stream, None);
+                let item = DatabaseItem::Stream(redis_stream);
                 database.insert(command.stream_key, item);
 
                 Ok(stream_id)
             }
-            Some(database_item) => match database_item.data {
-                RedisData::Stream(ref mut existing_stream) => {
+            Some(database_item) => match database_item {
+                DatabaseItem::Stream(ref mut existing_stream) => {
                     let latest_inner = existing_stream.0.last().ok_or_else(|| {
                         anyhow::anyhow!("Streams should always have at lest one datapoint")
                     })?;
@@ -255,9 +366,9 @@ impl Database {
         let database = self.0.read().unwrap();
         let stream = match database.get(&key) {
             None => anyhow::bail!("No stream found at {}", key),
-            Some(item) => match &item.data {
-                RedisData::String(_) => anyhow::bail!("No stream found at {}", key),
-                RedisData::Stream(stream) => stream,
+            Some(item) => match &item {
+                DatabaseItem::String(_) => anyhow::bail!("No stream found at {}", key),
+                DatabaseItem::Stream(stream) => stream,
             },
         };
 
@@ -330,6 +441,157 @@ impl Database {
         self.0.write().unwrap().remove(key).is_none()
     }
 
+    pub fn update_expiration(
+        &self,
+        key: &str,
+        expiration: CommandExpiration,
+    ) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        if let Some(item) = db.get_mut(key) {
+            match item {
+                DatabaseItem::String(item) => {
+                    let data = item.data();
+
+                    item.abort_deletion_process();
+
+                    let duration = match expiration {
+                        CommandExpiration::None => None,
+                        CommandExpiration::Other => None,
+                        CommandExpiration::Expiry(duration) => Some(duration),
+                    };
+
+                    if let Some(duration) = duration {
+                        let database = self.clone();
+                        let key = key.to_string();
+                        let join_handle = tokio::spawn(async move {
+                            sleep(duration).await;
+                            database.remove(&key);
+                        });
+
+                        item.set_cancellation(join_handle);
+                    }
+
+                    Ok(data)
+                }
+                _ => anyhow::bail!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                ),
+            }
+        } else {
+            Ok(empty_string())
+        }
+    }
+
+    pub fn get_remove(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
+        let mut db = self.0.write().map_err(|e| anyhow::anyhow!("{}", e))?;
+
+        if let Some(item) = db.get_mut(key) {
+            match item {
+                DatabaseItem::String(item) => {
+                    let data = item.data();
+
+                    item.abort_deletion_process();
+
+                    db.remove(key);
+                    Ok(Some(data))
+                }
+                _ => anyhow::bail!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                ),
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn remove_multiple(&self, keys: Vec<String>) -> usize {
+        let mut db = self.0.write().unwrap();
+        keys.iter().fold(0, |acc, key| {
+            if let Some(item) = db.get(key) {
+                if let DatabaseItem::String(item) = item {
+                    if let Some(process) = &item.cancellation_process {
+                        process.abort();
+                    }
+                }
+
+                db.remove(key);
+                acc + 1
+            } else {
+                acc
+            }
+        })
+    }
+
+    pub fn adjust_value_by_int(&self, key: &str, adjustment: i64) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().unwrap();
+        let value = match db.get_mut(key) {
+            Some(item) => match item {
+                DatabaseItem::String(redis_string) => {
+                    let value = if redis_string.data.find('.').is_some() {
+                        adjust_float_value_by_int(&redis_string.data, adjustment)
+                    } else {
+                        adjust_int_value_by_int(&redis_string.data, adjustment)
+                    }?;
+
+                    redis_string.data.clone_from(&value);
+
+                    Ok(value)
+                }
+                _ => Err(anyhow::anyhow!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                )
+                .context(format!("Item at key {} is not a string", key))),
+            },
+            None => {
+                let data = RedisString::new(adjustment.to_string(), None);
+                db.insert(key.to_string(), DatabaseItem::String(data));
+                Ok(adjustment.to_string())
+            }
+        }?;
+
+        let encoded = if value.find('.').is_some() {
+            encoding::bulk_string(&value)
+        } else {
+            encoding::encode_integer(value.parse::<i64>().unwrap())
+        };
+        Ok(encoded)
+    }
+
+    pub fn adjust_value_by_float(
+        &self,
+        key: &str,
+        adjustment: f64,
+    ) -> Result<String, anyhow::Error> {
+        let mut db = self.0.write().unwrap();
+        let value = match db.get_mut(key) {
+            Some(item) => match item {
+                DatabaseItem::String(redis_string) => {
+                    let value = if redis_string.data.find('.').is_some() {
+                        adjust_float_value_by_float(&redis_string.data, adjustment)
+                    } else {
+                        adjust_int_value_by_float(&redis_string.data, adjustment)
+                    }?;
+
+                    redis_string.data.clone_from(&value);
+
+                    Ok(value)
+                }
+                _ => Err(anyhow::anyhow!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                )
+                .context(format!("Item at key {} is not a string", key))),
+            },
+            None => {
+                let redis_string = RedisString::new(adjustment.to_string(), None);
+                db.insert(key.to_string(), DatabaseItem::String(redis_string));
+                Ok(adjustment.to_string())
+            }
+        }?;
+
+        Ok(encoding::bulk_string(&value))
+    }
+
     pub fn keys(&self) -> Result<Vec<String>, anyhow::Error> {
         // TODO: Figure out how to do this without cloning the keys
         let keys = {
@@ -379,22 +641,20 @@ impl Database {
                 OpCode::ResizeDb => parse_resize_db(&mut cursor)?,
                 OpCode::ExpireTimeMS => {
                     let database_item = parse_expire_time_ms(&mut cursor)?;
-                    if database_item.is_some() {
-                        let (key, value) = database_item.unwrap();
-                        database.set(key, value);
+                    if let Some((key, value)) = database_item {
+                        database.set_item(key, value);
                     }
                 }
                 OpCode::ExpireTime => {
                     let database_item = parse_expire_time_sec(&mut cursor)?;
-                    if database_item.is_some() {
-                        let (key, value) = database_item.unwrap();
-                        database.set(key, value);
+                    if let Some((key, value)) = database_item {
+                        database.set_item(key, value);
                     }
                 }
                 OpCode::Other(value_type_byte) => {
                     let value_type = ValueType::from_byte(value_type_byte)?;
                     let (key, value) = read_key_value_pair(value_type, None, &mut cursor)?;
-                    database.set(key, value);
+                    database.set_item(key, value);
                 }
                 OpCode::Eof => break,
             }
@@ -411,57 +671,50 @@ impl Clone for Database {
 }
 
 #[derive(Debug)]
-pub struct DatabaseItem {
-    data: RedisData,
+pub struct RedisString {
+    data: String,
     duration: Option<Duration>,
+    cancellation_process: Option<JoinHandle<()>>,
 }
 
-#[derive(Debug)]
-pub enum RedisData {
-    String(String),
-    Stream(RedisStream),
-}
-
-impl RedisData {
-    pub fn data_type(&self) -> String {
-        let data_type = match self {
-            RedisData::String(_) => "string",
-            RedisData::Stream(_) => "stream",
-        };
-        encoding::bulk_string(data_type)
+impl RedisString {
+    pub fn new(data: String, duration: Option<Duration>) -> Self {
+        Self {
+            data,
+            duration,
+            cancellation_process: None,
+        }
     }
 
     pub fn data(&self) -> String {
-        match self {
-            RedisData::String(data) => encoding::bulk_string(data),
-            RedisData::Stream(_data) => todo!(),
+        encoding::bulk_string(&self.data)
+    }
+
+    pub fn set_cancellation(&mut self, process: JoinHandle<()>) {
+        self.cancellation_process = Some(process);
+    }
+
+    pub fn abort_deletion_process(&mut self) {
+        if let Some(process) = &self.cancellation_process {
+            process.abort();
+            self.cancellation_process = None;
         }
     }
 }
 
-pub trait Encode {
-    fn encode(self) -> RedisData;
+#[derive(Debug)]
+pub enum DatabaseItem {
+    String(RedisString),
+    Stream(RedisStream),
 }
 
 impl DatabaseItem {
-    pub fn new<Data: Encode>(data: Data, duration: Option<Duration>) -> Self {
-        let redis_data = data.encode();
-        Self {
-            data: redis_data,
-            duration,
-        }
-    }
-}
-
-impl Encode for String {
-    fn encode(self) -> RedisData {
-        RedisData::String(self)
-    }
-}
-
-impl Encode for RedisStream {
-    fn encode(self) -> RedisData {
-        RedisData::Stream(self)
+    pub fn data_type(&self) -> String {
+        let data_type = match self {
+            DatabaseItem::String(_) => "string",
+            DatabaseItem::Stream(_) => "stream",
+        };
+        encoding::bulk_string(data_type)
     }
 }
 
@@ -586,7 +839,8 @@ fn read_key_value_pair(
         _ => anyhow::bail!("{:?} value type not supported", value_type),
     };
 
-    let database_item = DatabaseItem::new(value, expire_time);
+    let redis_string = RedisString::new(value, expire_time);
+    let database_item = DatabaseItem::String(redis_string);
 
     Ok((key, database_item))
 }
@@ -768,8 +1022,8 @@ fn read_streams_sync(
         let item = database.get(&command_stream.key).ok_or_else(|| {
             anyhow::anyhow!("No stream found for item at key {}", &command_stream.key)
         })?;
-        let stream = match &item.data {
-            RedisData::Stream(stream) => stream,
+        let stream = match &item {
+            DatabaseItem::Stream(stream) => stream,
             _ => {
                 anyhow::bail!("Item at key {} is not a stream", &command_stream.key);
             }
@@ -825,4 +1079,44 @@ fn stream_entry_greater_than_start(
             true
         }
     }
+}
+
+fn adjust_float_value_by_int(data: &str, amount: i64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<f64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not a float or out of range"))?;
+
+    let value = value + amount as f64;
+    Ok(value.to_string())
+}
+
+fn adjust_float_value_by_float(data: &str, amount: f64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<f64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not a float or out of range"))?;
+
+    let value = value + amount;
+    Ok(value.to_string())
+}
+
+fn adjust_int_value_by_int(data: &str, amount: i64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not an integer or out of range"))?;
+
+    let value = value
+        .checked_add(amount)
+        .ok_or_else(|| anyhow::anyhow!("ERR increment or decrement would overflow"))?;
+
+    Ok(value.to_string())
+}
+
+fn adjust_int_value_by_float(data: &str, amount: f64) -> Result<String, anyhow::Error> {
+    let value = data
+        .parse::<i64>()
+        .map_err(|_| anyhow::anyhow!("ERR value is not an integer or out of range"))?;
+
+    let value = (value as f64) + amount;
+
+    Ok(value.to_string())
 }

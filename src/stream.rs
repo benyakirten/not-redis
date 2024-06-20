@@ -50,7 +50,12 @@ pub async fn handle_stream(
             request::Command::Ping(body) => commands::pong(body),
             request::Command::Echo(body) => commands::echo_response(body),
             request::Command::Get(key) => commands::get_value(&database, key),
-            request::Command::Set(key, value) => commands::set_value(&database, key, value),
+            request::Command::Set(set_command) => commands::set_value(&database, set_command),
+            request::Command::Del(keys) => commands::delete_keys(&database, keys),
+            request::Command::GetDel(key) => commands::get_delete_key(&database, key),
+            request::Command::GetEx(key, expiry) => {
+                commands::update_expiration(&database, key, expiry)
+            }
             request::Command::Info => commands::get_info(&server).await,
             request::Command::ReplConf(repl) => commands::replica_confirm(repl, 0),
             request::Command::Psync(..) => commands::perform_psync(&server).await,
@@ -67,6 +72,17 @@ pub async fn handle_stream(
             request::Command::Xrange(command) => commands::get_stream_range(&database, command),
             request::Command::Xread(command) => {
                 commands::read_streams(&database, command, receiver).await
+            }
+            request::Command::Incr(key) => commands::increment_value_by_int(&database, key, 1),
+            request::Command::IncrBy(key, amount) => {
+                commands::increment_value_by_int(&database, key, amount)
+            }
+            request::Command::IncrByFloat(key, amount) => {
+                commands::increment_value_by_float(&database, key, amount)
+            }
+            request::Command::Decr(key) => commands::increment_value_by_int(&database, key, -1),
+            request::Command::DecrBy(key, amount) => {
+                commands::increment_value_by_int(&database, key, -amount)
             }
         }?;
 
@@ -112,8 +128,8 @@ pub async fn handle_replica_stream(
 
             match request {
                 request::Command::Get(key) => commands::get_value(&database, key).map(|_| ()),
-                request::Command::Set(key, value) => {
-                    commands::set_value(&database, key, value).map(|_| ())
+                request::Command::Set(command) => {
+                    commands::set_value(&database, command).map(|_| ())
                 }
                 request::Command::Wait(..) => {
                     let response = encoding::okay_string().as_bytes().to_vec();
