@@ -116,7 +116,7 @@ pub fn delete_keys(
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
     let count = database.remove_multiple(keys);
 
-    let response = encoding::encode_integer(count).as_bytes().to_vec();
+    let response = encoding::encode_integer(count as i64).as_bytes().to_vec();
     let response = vec![response];
 
     Ok(response)
@@ -157,7 +157,7 @@ pub async fn transmit_wait(
     timeout: u64,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
     let num_respondents = server.perform_wait(num_replicas, timeout).await?;
-    let response = encoding::encode_integer(num_respondents)
+    let response = encoding::encode_integer(num_respondents as i64)
         .as_bytes()
         .to_vec();
     let response = vec![response];
@@ -268,10 +268,12 @@ pub fn increment_value_by_int(
     key: String,
     adjustment: i64,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let response = database
-        .adjust_value_by_int(&key, adjustment)?
-        .as_bytes()
-        .to_vec();
+    let response = match database.adjust_value_by_int(&key, adjustment) {
+        Ok(value) => value,
+        Err(e) => encoding::error_string(&e.to_string()),
+    }
+    .as_bytes()
+    .to_vec();
 
     let responses = vec![response];
     Ok(responses)
@@ -282,10 +284,12 @@ pub fn increment_value_by_float(
     key: String,
     adjustment: f64,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let response = database
-        .adjust_value_by_float(&key, adjustment)?
-        .as_bytes()
-        .to_vec();
+    let response = match database.adjust_value_by_float(&key, adjustment) {
+        Ok(value) => value,
+        Err(e) => encoding::error_string(&e.to_string()),
+    }
+    .as_bytes()
+    .to_vec();
 
     let responses = vec![response];
     Ok(responses)

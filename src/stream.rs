@@ -82,7 +82,7 @@ pub async fn handle_stream(
             }
             request::Command::Decr(key) => commands::increment_value_by_int(&database, key, -1),
             request::Command::DecrBy(key, amount) => {
-                commands::increment_value_by_int(&database, key, amount)
+                commands::increment_value_by_int(&database, key, -1 * amount)
             }
         }?;
 

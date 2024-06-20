@@ -555,7 +555,12 @@ impl Database {
             }
         }?;
 
-        Ok(encoding::bulk_string(&value))
+        let encoded = if let Some(_) = value.find('.') {
+            encoding::bulk_string(&value)
+        } else {
+            encoding::encode_integer(value.parse::<i64>().unwrap())
+        };
+        Ok(encoded)
     }
 
     pub fn adjust_value_by_float(
@@ -567,9 +572,11 @@ impl Database {
         let value = match db.get_mut(key) {
             Some(item) => match item {
                 DatabaseItem::String(redis_string) => {
+                    println!("ADJUSTING BY FLOAT: {} + {}", redis_string.data, adjustment);
                     let value = if let Some(_) = redis_string.data.find('.') {
                         adjust_float_value_by_float(&redis_string.data, adjustment)
                     } else {
+                        println!("ADJUSTING INT BY FLOAT");
                         adjust_int_value_by_float(&redis_string.data, adjustment)
                     }?;
 
@@ -1116,9 +1123,7 @@ fn adjust_int_value_by_float(data: &str, amount: f64) -> Result<String, anyhow::
         .parse::<i64>()
         .map_err(|_| anyhow::anyhow!("ERR value is not an integer or out of range"))?;
 
-    let value = value
-        .checked_add(amount as i64)
-        .ok_or_else(|| anyhow::anyhow!("ERR increment or decrement would overflow"))?;
+    let value = (value as f64) + amount;
 
     Ok(value.to_string())
 }

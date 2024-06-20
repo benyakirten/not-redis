@@ -1,3 +1,3 @@
-pub fn encode_integer(val: usize) -> String {
+pub fn encode_integer(val: i64) -> String {
     format!(":{val}\r\n")
 }

@@ -2,7 +2,7 @@ use tokio::time::{sleep, Duration};
 
 use common::{encode_string, send_message, TestApp};
 use not_redis::encoding::{
-    bulk_string, empty_string, encode_integer, encode_string_array, simple_string,
+    bulk_string, empty_string, encode_integer, encode_string_array, error_string, simple_string,
 };
 
 mod common;
@@ -299,26 +299,68 @@ async fn getex_changes_item_expiration() {
     assert_eq!(resp, bulk_string("bar"));
 }
 
-// #[tokio::test]
-// async fn incr_decr_num_string() {
-//     let test_app = TestApp::master().await;
-//     let address = test_app.address.name();
-// }
+#[tokio::test]
+async fn incr_decr_num_string() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo 1");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("incr foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, encode_integer(2));
+
+    let message = encode_string("decr foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, encode_integer(1));
+
+    let message = encode_string("decrby foo 2");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, encode_integer(-1));
+
+    let message = encode_string("incrby foo -2");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, encode_integer(-3));
+
+    let message = encode_string("incrby foo 2");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, encode_integer(-1));
+
+    let message = encode_string("incrbyfloat foo 3.1");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, bulk_string("2.1"));
+}
+
+#[tokio::test]
+async fn incr_decr_non_number_string() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo bar");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, simple_string("OK"));
+
+    let message = encode_string("incr foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(
+        resp,
+        error_string("ERR value is not an integer or out of range")
+    );
+
+    let message = encode_string("decr foo");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(
+        resp,
+        error_string("ERR value is not an integer or out of range")
+    );
+}
 
 // #[tokio::test]
-// async fn incr_decr_non_number_string() {
+// async fn cannot_get_set_item_not_a_string() {
 //     let test_app = TestApp::master().await;
 //     let address = test_app.address.name();
 
-//     let message = encode_string("set foo bar");
-//     let resp = send_message(&address, &message).await;
-//     assert_eq!(resp, simple_string("OK"));
-
-//     let message = encode_string("incr foo");
-//     let resp = send_message(&address, &message).await;
-//     assert_eq!(resp, simple_string("ERR value is not an integer or out of range"));
-
-//     let message = encode_string("decr foo");
-//     let resp = send_message(&address, &message).await;
-//     assert_eq!(resp, simple_string("ERR value is not an integer or out of range"));
+//     todo!()
 // }
