@@ -357,10 +357,17 @@ async fn incr_decr_non_number_string() {
     );
 }
 
+// TODO: When we improve error messages
 // #[tokio::test]
 // async fn cannot_get_set_item_not_a_string() {
 //     let test_app = TestApp::master().await;
 //     let address = test_app.address.name();
 
-//     todo!()
+//     let message = encode_string("xadd cool 100-* one two");
+//     let resp = send_message(&address, &message).await;
+//     assert_eq!(resp, bulk_string("100-0"));
+
+//     let message = encode_string("get cool");
+//     let resp = send_message(&address, &message).await;
+//     assert_eq!(resp, error_string("100-0"));
 // }
