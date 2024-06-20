@@ -534,7 +534,7 @@ impl Database {
                         adjust_int_value_by_int(&redis_string.data, adjustment)
                     }?;
 
-                    redis_string.data = value.clone();
+                    redis_string.data.clone_from(&value);
 
                     Ok(value)
                 }
@@ -573,7 +573,7 @@ impl Database {
                         adjust_int_value_by_float(&redis_string.data, adjustment)
                     }?;
 
-                    redis_string.data = value.clone();
+                    redis_string.data.clone_from(&value);
 
                     Ok(value)
                 }
