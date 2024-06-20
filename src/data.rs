@@ -181,9 +181,7 @@ impl Database {
         };
 
         let return_data = if return_old_value {
-            item.as_ref()
-                .map(|i| i.data())
-                .unwrap_or_else(|| empty_string())
+            item.as_ref().map(|i| i.data()).unwrap_or_else(empty_string)
         } else {
             okay_string()
         };
@@ -511,13 +509,10 @@ impl Database {
         let mut db = self.0.write().unwrap();
         keys.iter().fold(0, |acc, key| {
             if let Some(item) = db.get(key) {
-                match item {
-                    DatabaseItem::String(item) => {
-                        if let Some(process) = &item.cancellation_process {
-                            process.abort();
-                        }
+                if let DatabaseItem::String(item) = item {
+                    if let Some(process) = &item.cancellation_process {
+                        process.abort();
                     }
-                    _ => {}
                 }
 
                 db.remove(key);
@@ -533,7 +528,7 @@ impl Database {
         let value = match db.get_mut(key) {
             Some(item) => match item {
                 DatabaseItem::String(redis_string) => {
-                    let value = if let Some(_) = redis_string.data.find('.') {
+                    let value = if redis_string.data.find('.').is_some() {
                         adjust_float_value_by_int(&redis_string.data, adjustment)
                     } else {
                         adjust_int_value_by_int(&redis_string.data, adjustment)
@@ -555,7 +550,7 @@ impl Database {
             }
         }?;
 
-        let encoded = if let Some(_) = value.find('.') {
+        let encoded = if value.find('.').is_some() {
             encoding::bulk_string(&value)
         } else {
             encoding::encode_integer(value.parse::<i64>().unwrap())
@@ -572,11 +567,9 @@ impl Database {
         let value = match db.get_mut(key) {
             Some(item) => match item {
                 DatabaseItem::String(redis_string) => {
-                    println!("ADJUSTING BY FLOAT: {} + {}", redis_string.data, adjustment);
-                    let value = if let Some(_) = redis_string.data.find('.') {
+                    let value = if redis_string.data.find('.').is_some() {
                         adjust_float_value_by_float(&redis_string.data, adjustment)
                     } else {
-                        println!("ADJUSTING INT BY FLOAT");
                         adjust_int_value_by_float(&redis_string.data, adjustment)
                     }?;
 
