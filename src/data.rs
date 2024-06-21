@@ -12,6 +12,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout, Instant};
 
 use crate::encoding::{empty_string, okay_string};
+use crate::errors::{wrong_type, wrong_type_str};
 use crate::request::{self, CommandExpiration, SetOverride};
 use crate::utils::current_unix_timestamp;
 use crate::{encoding, transmission, utils};
@@ -107,9 +108,7 @@ impl Database {
         let item = database.get(key);
 
         let data = match item {
-            Some(DatabaseItem::Stream(_)) => {
-                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
-            }
+            Some(DatabaseItem::Stream(_)) => anyhow::bail!(wrong_type_str()),
             Some(DatabaseItem::String(redis_string)) => Some(redis_string.data.to_string()),
             None => None,
         };
@@ -161,9 +160,7 @@ impl Database {
 
         let item = db.get_mut(&key);
         let item = match item {
-            Some(DatabaseItem::Stream(_)) => {
-                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
-            }
+            Some(DatabaseItem::Stream(_)) => anyhow::bail!(wrong_type_str()),
             Some(DatabaseItem::String(redis_string)) => Some(redis_string),
             None => None,
         };
@@ -337,9 +334,7 @@ impl Database {
 
                     Ok(stream_id)
                 }
-                _ => Err(anyhow::anyhow!(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value"
-                )),
+                _ => Err(wrong_type()),
             },
         }
     }
@@ -354,9 +349,7 @@ impl Database {
         let stream = match database.get(&key) {
             None => return Ok(empty_string()),
             Some(item) => match &item {
-                DatabaseItem::String(_) => anyhow::bail!(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value"
-                ),
+                DatabaseItem::String(_) => anyhow::bail!(wrong_type_str()),
                 DatabaseItem::Stream(stream) => stream,
             },
         };
@@ -463,9 +456,7 @@ impl Database {
 
                     Ok(data)
                 }
-                _ => anyhow::bail!(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value"
-                ),
+                _ => anyhow::bail!(wrong_type_str()),
             }
         } else {
             Ok(empty_string())
@@ -485,9 +476,7 @@ impl Database {
                     db.remove(key);
                     Ok(Some(data))
                 }
-                _ => anyhow::bail!(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value"
-                ),
+                _ => anyhow::bail!(wrong_type_str()),
             }
         } else {
             Ok(None)
@@ -522,10 +511,8 @@ impl Database {
 
                     Ok(value)
                 }
-                _ => Err(anyhow::anyhow!(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value"
-                )
-                .context(format!("Item at key {} is not a string", key))),
+                _ => Err(anyhow::anyhow!(wrong_type_str())
+                    .context(format!("Item at key {} is not a string", key))),
             },
             None => {
                 let data = RedisString::new(adjustment.to_string(), None);
@@ -561,10 +548,8 @@ impl Database {
 
                     Ok(value)
                 }
-                _ => Err(anyhow::anyhow!(
-                    "WRONGTYPE Operation against a key holding the wrong kind of value"
-                )
-                .context(format!("Item at key {} is not a string", key))),
+                _ => Err(anyhow::anyhow!(wrong_type_str())
+                    .context(format!("Item at key {} is not a string", key))),
             },
             None => {
                 let redis_string = RedisString::new(adjustment.to_string(), None);
@@ -1017,9 +1002,7 @@ fn read_streams_sync(
             Some(item) => match &item {
                 DatabaseItem::Stream(stream) => stream,
                 _ => {
-                    anyhow::bail!(
-                        "WRONGTYPE Operation against a key holding the wrong kind of value"
-                    );
+                    anyhow::bail!(wrong_type_str());
                 }
             },
             None => continue,

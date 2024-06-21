@@ -514,3 +514,37 @@ async fn block_reads_with_no_id_specified_returns_all_new_entries() {
 
     assert_eq!(block_resp, want_streams);
 }
+
+#[tokio::test]
+async fn receive_errors_if_item_not_stream() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("set foo bar");
+    send_message(&address, &message).await;
+
+    let message = encode_string("xadd foo 100-50 one two three four");
+    let response = send_message(&address, &message).await;
+    assert_eq!(
+        response,
+        error_string("WRONGTYPE Operation against a key holding the wrong kind of value")
+    );
+
+    let message = encode_string("xrange foo 100 102");
+    let response = send_message(&address, &message).await;
+    assert_eq!(
+        response,
+        error_string("WRONGTYPE Operation against a key holding the wrong kind of value")
+    );
+
+    let message = encode_string("xread streams cool 100-75");
+    let response = send_message(&address, &message).await;
+    assert_eq!(
+        response,
+        error_string("WRONGTYPE Operation against a key holding the wrong kind of value")
+    );
+
+    let message = encode_string("get foo");
+    let response = send_message(&address, &message).await;
+    assert_eq!(response, bulk_string("bar"));
+}
