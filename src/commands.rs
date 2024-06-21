@@ -248,10 +248,12 @@ pub fn get_stream_range(
     database: &data::Database,
     command: XRangeCommand,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let response = database
-        .read_from_stream(command.key, command.start, command.end)?
-        .as_bytes()
-        .to_vec();
+    let response = match database.read_from_stream(command.key, command.start, command.end) {
+        Err(e) => encoding::error_string(&e.to_string()),
+        Ok(v) => v,
+    }
+    .as_bytes()
+    .to_vec();
 
     let responses = vec![response];
     Ok(responses)
@@ -262,11 +264,15 @@ pub async fn read_streams(
     command: XReadCommand,
     receiver: Receiver<transmission::Transmission>,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let response = database
+    let response = match database
         .read_from_streams(command.block, command.streams, receiver)
-        .await?
-        .as_bytes()
-        .to_vec();
+        .await
+    {
+        Err(e) => encoding::error_string(&e.to_string()),
+        Ok(v) => v,
+    }
+    .as_bytes()
+    .to_vec();
 
     let responses = vec![response];
     Ok(responses)

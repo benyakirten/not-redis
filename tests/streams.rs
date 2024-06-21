@@ -537,7 +537,7 @@ async fn receive_errors_if_item_not_stream() {
         error_string("WRONGTYPE Operation against a key holding the wrong kind of value")
     );
 
-    let message = encode_string("xread streams cool 100-75");
+    let message = encode_string("xread streams foo 100-75");
     let response = send_message(&address, &message).await;
     assert_eq!(
         response,
