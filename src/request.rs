@@ -279,7 +279,7 @@ fn parse_expiry(amount: &str, multiplier: u64) -> Result<Duration, anyhow::Error
 
 fn parse_expiry_at(time: &str, multiplier: u64) -> Result<Duration, anyhow::Error> {
     let time = str::parse::<u64>(time)
-        .context("Parsing time into number")?
+        .map_err(|_| not_an_integer())?
         .checked_mul(multiplier)
         .ok_or_else(|| anyhow::anyhow!("ERR time is too large"))?;
     let current_timestamp = current_unix_timestamp()? as u64;

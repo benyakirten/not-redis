@@ -160,9 +160,15 @@ impl Database {
 
         let item = db.get_mut(&key);
         let item = match item {
-            Some(DatabaseItem::Stream(_)) => anyhow::bail!(wrong_type_str()),
             Some(DatabaseItem::String(redis_string)) => Some(redis_string),
             None => None,
+            _ => {
+                if return_old_value {
+                    anyhow::bail!(wrong_type_str())
+                } else {
+                    None
+                }
+            }
         };
 
         let return_data = if return_old_value {

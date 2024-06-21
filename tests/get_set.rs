@@ -355,17 +355,55 @@ async fn incr_decr_non_number_string() {
     );
 }
 
-// TODO: When we improve error messages
-// #[tokio::test]
-// async fn cannot_get_set_item_not_a_string() {
-//     let test_app = TestApp::master().await;
-//     let address = test_app.address.name();
+#[tokio::test]
+async fn cannot_set_invalid_expiration_time() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
 
-//     let message = encode_string("xadd cool 100-* one two");
-//     let resp = send_message(&address, &message).await;
-//     assert_eq!(resp, bulk_string("100-0"));
+    let message = encode_string(&format!("set cool cooler ex {}", 10e100));
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, "ERR value is not an integer or out of range");
 
-//     let message = encode_string("get cool");
-//     let resp = send_message(&address, &message).await;
-//     assert_eq!(resp, error_string("100-0"));
-// }
+    let message = encode_string(&format!("getex cool px {}", 10e100));
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, "ERR value is not an integer or out of range");
+
+    let message = encode_string(&format!("set cool cooler pxat {}", 10e100));
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, "ERR value is not an integer or out of range");
+
+    let message = encode_string("set cool cooler exat hello");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, "ERR value is not an integer or out of range");
+}
+
+#[tokio::test]
+async fn cannot_get_item_not_a_string() {
+    let test_app = TestApp::master().await;
+    let address = test_app.address.name();
+
+    let message = encode_string("xadd cool 100-* one two");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(resp, bulk_string("100-0"));
+
+    let message = encode_string("get cool");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(
+        resp,
+        error_string("WRONGTYPE Operation against a key holding the wrong kind of value")
+    );
+
+    let message = encode_string("getex cool px 1000");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(
+        resp,
+        error_string("WRONGTYPE Operation against a key holding the wrong kind of value")
+    );
+
+    let message = encode_string("set cool cooler get");
+    let resp = send_message(&address, &message).await;
+    assert_eq!(
+        resp,
+        error_string("WRONGTYPE Operation against a key holding the wrong kind of value")
+    );
+}
