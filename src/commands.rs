@@ -186,8 +186,7 @@ pub async fn view_config(
                 request::ConfigKey::Dir => read.config.dir.clone(),
                 request::ConfigKey::Dbfilename => read.config.db_file_name.clone(),
             }
-            // TODO: Add a proper fallback/
-            .unwrap_or_else(|| encoding::error_string("ERR Unable to get config"));
+            .unwrap_or_else(|| String::from(""));
 
             (key.to_string(), config_option)
         }

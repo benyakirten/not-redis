@@ -6,9 +6,10 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use tokio::spawn;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::task::JoinHandle;
-use tokio::time::sleep;
+use tokio::time::{sleep, timeout, Instant};
 
 use crate::encoding::{empty_string, okay_string};
 use crate::request::{self, CommandExpiration, SetOverride};
@@ -135,7 +136,7 @@ impl Database {
         if let Some(dur) = duration {
             let database = self.clone();
             let key = key.to_string();
-            let join_handle = tokio::spawn(async move {
+            let join_handle = spawn(async move {
                 sleep(dur).await;
                 database.remove(&key);
             });
@@ -212,7 +213,7 @@ impl Database {
                 if let Some(dur) = duration {
                     let database = self.clone();
                     let key_copy = key.clone();
-                    let process = tokio::spawn(async move {
+                    let process = spawn(async move {
                         sleep(dur).await;
                         database.remove(&key_copy);
                     });
@@ -230,7 +231,7 @@ impl Database {
                 if let Some(dur) = duration {
                     let database = self.clone();
                     let key_copy = key.clone();
-                    let process = tokio::spawn(async move {
+                    let process = spawn(async move {
                         sleep(dur).await;
                         database.remove(&key_copy);
                     });
@@ -364,7 +365,7 @@ impl Database {
     ) -> Result<String, anyhow::Error> {
         let database = self.0.read().unwrap();
         let stream = match database.get(&key) {
-            None => anyhow::bail!("No stream found at {}", key),
+            None => return Ok(empty_string()),
             Some(item) => match &item {
                 DatabaseItem::String(_) => anyhow::bail!(
                     "WRONGTYPE Operation against a key holding the wrong kind of value"
@@ -465,7 +466,7 @@ impl Database {
                     if let Some(duration) = duration {
                         let database = self.clone();
                         let key = key.to_string();
-                        let join_handle = tokio::spawn(async move {
+                        let join_handle = spawn(async move {
                             sleep(duration).await;
                             database.remove(&key);
                         });
@@ -509,13 +510,8 @@ impl Database {
     pub fn remove_multiple(&self, keys: Vec<String>) -> usize {
         let mut db = self.0.write().unwrap();
         keys.iter().fold(0, |acc, key| {
-            if let Some(item) = db.get(key) {
-                if let DatabaseItem::String(item) = item {
-                    if let Some(process) = &item.cancellation_process {
-                        process.abort();
-                    }
-                }
-
+            if let Some(item) = db.get_mut(key) {
+                item.clean_up();
                 db.remove(key);
                 acc + 1
             } else {
@@ -717,6 +713,15 @@ impl DatabaseItem {
         };
         encoding::bulk_string(data_type)
     }
+
+    pub fn clean_up(&mut self) {
+        match self {
+            DatabaseItem::String(redis_string) => {
+                redis_string.abort_deletion_process();
+            }
+            DatabaseItem::Stream(_) => {}
+        }
+    }
 }
 
 // TODO: Consider if this should be a btree
@@ -837,6 +842,7 @@ fn read_key_value_pair(
     let key = encoding::decode_rdb_string(cursor)?;
     let value = match value_type {
         ValueType::String => encoding::decode_rdb_string(cursor)?,
+        // TODO
         _ => anyhow::bail!("{:?} value type not supported", value_type),
     };
 
@@ -906,9 +912,9 @@ async fn read_streams_after_limited_wait(
     read_command_streams: Vec<request::XReadCommandStream>,
     mut receiver: Receiver<transmission::Transmission>,
 ) -> Result<String, anyhow::Error> {
-    let start = tokio::time::Instant::now();
+    let start = Instant::now();
     let mut streams: Vec<TempReadStreamItem> = vec![];
-    let wait = tokio::time::Duration::from_millis(wait);
+    let wait = Duration::from_millis(wait);
 
     loop {
         let elapsed = start.elapsed();
@@ -916,9 +922,9 @@ async fn read_streams_after_limited_wait(
             break;
         }
 
-        let result = tokio::time::timeout(wait - elapsed, receiver.recv()).await;
+        let result = timeout(wait - elapsed, receiver.recv()).await;
         match result {
-            Ok(Err(e)) => anyhow::bail!("{}", e),
+            Ok(Err(e)) => anyhow::bail!(e),
             Err(_) => break,
             Ok(Ok(transmission)) => {
                 if let transmission::Transmission::Xadd(xadd) = transmission {
@@ -1020,14 +1026,16 @@ fn read_streams_sync(
 
     let mut streams: Vec<ReadStreamItem> = Vec::with_capacity(read_command_streams.len());
     for command_stream in read_command_streams.iter() {
-        let item = database.get(&command_stream.key).ok_or_else(|| {
-            anyhow::anyhow!("No stream found for item at key {}", &command_stream.key)
-        })?;
-        let stream = match &item {
-            DatabaseItem::Stream(stream) => stream,
-            _ => {
-                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value");
-            }
+        let stream = match database.get(&command_stream.key) {
+            Some(item) => match &item {
+                DatabaseItem::Stream(stream) => stream,
+                _ => {
+                    anyhow::bail!(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                    );
+                }
+            },
+            None => continue,
         };
 
         let mut inner_streams: Vec<&InnerRedisStream> = vec![];
@@ -1056,7 +1064,11 @@ fn read_streams_sync(
         streams.push(item);
     }
 
-    let output = encoding::encode_streams(streams);
+    let output = if streams.is_empty() {
+        empty_string()
+    } else {
+        encoding::encode_streams(streams)
+    };
 
     Ok(output)
 }
