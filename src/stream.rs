@@ -35,7 +35,14 @@ pub async fn handle_stream(
             .map(|s| s.to_string())
             .collect::<Vec<String>>();
 
-        let request = request::parse_request(raw_request)?;
+        let request = match request::parse_request(raw_request) {
+            Err(e) => {
+                let message = e.to_string();
+                write_to_stream(&mut stream, message.as_bytes()).await?;
+                continue;
+            }
+            Ok(v) => v,
+        };
 
         let command_type = match &request {
             request::Command::Get(_) | request::Command::Set(..) => CommandType::ToReplicate,
@@ -159,11 +166,15 @@ async fn write_command_responses(
     command_responses: Vec<Vec<u8>>,
 ) -> Result<(), anyhow::Error> {
     for response in command_responses {
-        stream
-            .write_all(response.as_slice())
-            .await
-            .context("writing to outbound stream")?;
+        write_to_stream(stream, response.as_slice()).await?;
     }
 
     Ok(())
+}
+
+async fn write_to_stream(stream: &mut TcpStream, message: &[u8]) -> Result<(), anyhow::Error> {
+    stream
+        .write_all(message)
+        .await
+        .context("writing to outbound stream")
 }

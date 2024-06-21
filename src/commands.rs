@@ -2,11 +2,10 @@ use std::collections::HashMap;
 
 use tokio::sync::broadcast::{Receiver, Sender};
 
-use crate::{
-    data, encoding,
-    request::{self, CommandExpiration, SetCommand, XAddCommand, XRangeCommand, XReadCommand},
-    server, transmission,
+use crate::request::{
+    self, CommandExpiration, SetCommand, XAddCommand, XRangeCommand, XReadCommand,
 };
+use crate::{data, encoding, server, transmission};
 
 pub fn pong(body: Option<String>) -> Result<Vec<Vec<u8>>, anyhow::Error> {
     let response = match body {
@@ -14,7 +13,6 @@ pub fn pong(body: Option<String>) -> Result<Vec<Vec<u8>>, anyhow::Error> {
         None => encoding::simple_string("PONG"),
     }
     .as_bytes()
-    .to_vec()
     .to_vec();
     let response = vec![response];
 
@@ -29,10 +27,13 @@ pub fn echo_response(body: String) -> Result<Vec<Vec<u8>>, anyhow::Error> {
 }
 
 pub fn get_value(database: &data::Database, key: String) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let value = database.get(&key)?;
+    let value = database.get(&key);
     let response = match value {
-        Some(data) => data,
-        None => encoding::empty_string(),
+        Ok(v) => match v {
+            Some(v) => encoding::bulk_string(&v),
+            None => encoding::empty_string(),
+        },
+        Err(v) => encoding::error_string(&v.to_string()),
     }
     .as_bytes()
     .to_vec();
@@ -68,6 +69,7 @@ pub async fn perform_psync(server: &server::RedisServer) -> Result<Vec<Vec<u8>>,
     let repl_id = &server.read().await.replication.id;
     let encoded = encoding::simple_string(&format!("FULLRESYNC {} 0", repl_id));
 
+    // TODO: Get the actual database
     let empty_rdb = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2";
     let empty_rdb = hex::decode(empty_rdb)?;
     let rdb_sync = encoding::encode_rdb(empty_rdb);
@@ -96,13 +98,16 @@ pub fn set_value(
     database: &data::Database,
     set_command: SetCommand,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let result = database.set_value(
+    let result = match database.set_value(
         set_command.key,
         set_command.value,
         set_command.get_old_value,
         set_command.overwrite,
         set_command.expires,
-    )?;
+    ) {
+        Ok(v) => v,
+        Err(e) => encoding::error_string(&e.to_string()),
+    };
 
     let response = result.as_bytes().to_vec();
     let response = vec![response];
@@ -127,7 +132,10 @@ pub fn update_expiration(
     key: String,
     expiration: CommandExpiration,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let response = database.update_expiration(&key, expiration)?;
+    let response = match database.update_expiration(&key, expiration) {
+        Ok(v) => v,
+        Err(e) => encoding::error_string(&e.to_string()),
+    };
     let response = response.as_bytes().to_vec();
     let response = vec![response];
 
@@ -138,10 +146,12 @@ pub fn get_delete_key(
     database: &data::Database,
     key: String,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let value = database.get_remove(&key)?;
-    let response = match value {
-        Some(data) => data,
-        None => encoding::empty_string(),
+    let response = match database.get_remove(&key) {
+        Ok(v) => match v {
+            Some(v) => v,
+            None => encoding::empty_string(),
+        },
+        Err(e) => encoding::error_string(&e.to_string()),
     }
     .as_bytes()
     .to_vec();
@@ -176,7 +186,6 @@ pub async fn view_config(
                 request::ConfigKey::Dir => read.config.dir.clone(),
                 request::ConfigKey::Dbfilename => read.config.db_file_name.clone(),
             }
-            // TODO: Add a proper fallback/
             .unwrap_or_else(|| String::from(""));
 
             (key.to_string(), config_option)
@@ -239,10 +248,12 @@ pub fn get_stream_range(
     database: &data::Database,
     command: XRangeCommand,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let response = database
-        .read_from_stream(command.key, command.start, command.end)?
-        .as_bytes()
-        .to_vec();
+    let response = match database.read_from_stream(command.key, command.start, command.end) {
+        Err(e) => encoding::error_string(&e.to_string()),
+        Ok(v) => v,
+    }
+    .as_bytes()
+    .to_vec();
 
     let responses = vec![response];
     Ok(responses)
@@ -253,11 +264,15 @@ pub async fn read_streams(
     command: XReadCommand,
     receiver: Receiver<transmission::Transmission>,
 ) -> Result<Vec<Vec<u8>>, anyhow::Error> {
-    let response = database
+    let response = match database
         .read_from_streams(command.block, command.streams, receiver)
-        .await?
-        .as_bytes()
-        .to_vec();
+        .await
+    {
+        Err(e) => encoding::error_string(&e.to_string()),
+        Ok(v) => v,
+    }
+    .as_bytes()
+    .to_vec();
 
     let responses = vec![response];
     Ok(responses)

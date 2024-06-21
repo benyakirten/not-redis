@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 
-use crate::{data::RedisStreamItem, utils::current_unix_timestamp};
+use crate::{data::RedisStreamItem, errors::not_an_integer, utils::current_unix_timestamp};
 
 #[derive(Debug)]
 pub struct SetCommand {
@@ -184,7 +184,7 @@ fn parse_ping(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let ping_message = match body {
         msg if msg.is_empty() => None,
         msg if msg.len() == 1 => Some(msg[0].clone()),
-        _ => anyhow::bail!("too many arguments for PING command"),
+        _ => anyhow::bail!("usage ping [message]"),
     };
 
     Ok(Command::Ping(ping_message))
@@ -192,9 +192,9 @@ fn parse_ping(body: Vec<String>) -> Result<Command, anyhow::Error> {
 
 fn parse_echo(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let echo_message = match body {
-        msg if msg.is_empty() => anyhow::bail!("missing body for ECHO command"),
+        msg if msg.is_empty() => anyhow::bail!("usage echo message"),
         msg if msg.len() == 1 => msg[0].clone(),
-        _ => anyhow::bail!("too many arguments for ECHO command"),
+        _ => anyhow::bail!("usage echo message"),
     };
 
     Ok(Command::Echo(echo_message))
@@ -202,14 +202,16 @@ fn parse_echo(body: Vec<String>) -> Result<Command, anyhow::Error> {
 
 fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let mut body_iter = body.iter();
+
+    let set_explanation = "SET key value [NX | XX] [GET] [EX seconds | PX milliseconds |
+  EXAT unix-time-seconds | PXAT unix-time-milliseconds | KEEPTTL]";
     let key = body_iter
         .next()
-        .ok_or_else(|| anyhow::anyhow!("missing key for SET command"))?
+        .ok_or_else(|| anyhow::anyhow!("Missing key: {}", set_explanation))?
         .clone();
-
     let value = body_iter
         .next()
-        .ok_or_else(|| anyhow::anyhow!("missing value for SET command"))?
+        .ok_or_else(|| anyhow::anyhow!("Missing value: {}", set_explanation))?
         .clone();
 
     let mut overwrite = SetOverride::Normal;
@@ -224,28 +226,31 @@ fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
             "ex" => {
                 let amount = body_iter
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                    .ok_or_else(|| anyhow::anyhow!("Missing EX seconds: {}", set_explanation))?;
                 let duration = parse_expiry(amount, 1000)?;
                 expires = CommandExpiration::Expiry(duration);
             }
             "px" => {
-                let amount = body_iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                let amount = body_iter.next().ok_or_else(|| {
+                    anyhow::anyhow!("Missing PX milliseconds: {}", set_explanation)
+                })?;
                 let duration = parse_expiry(amount, 1)?;
                 expires = CommandExpiration::Expiry(duration);
             }
             "exat" => {
-                let time = body_iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                let time = body_iter.next().ok_or_else(|| {
+                    anyhow::anyhow!("Missing UNIX timestamp (in seconds): {}", set_explanation)
+                })?;
                 let duration = parse_expiry_at(time, 1000)?;
                 expires = CommandExpiration::Expiry(duration);
             }
             "pxat" => {
-                let time = body_iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                let time = body_iter.next().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Missing UNIX timestamp (in milliseconds): {}",
+                        set_explanation
+                    )
+                })?;
                 let duration = parse_expiry_at(time, 1)?;
                 expires = CommandExpiration::Expiry(duration);
             }
@@ -266,20 +271,22 @@ fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
 }
 
 fn parse_expiry(amount: &str, multiplier: u64) -> Result<Duration, anyhow::Error> {
-    let amount = str::parse::<u64>(amount).context("Parsing amount into number")?;
+    let amount = str::parse::<u64>(amount)
+        .context("Parsing amount into number")
+        .map_err(|_| not_an_integer())?;
     Ok(Duration::from_millis(amount * multiplier))
 }
 
 fn parse_expiry_at(time: &str, multiplier: u64) -> Result<Duration, anyhow::Error> {
     let time = str::parse::<u64>(time)
-        .context("Parsing time into number")?
+        .map_err(|_| not_an_integer())?
         .checked_mul(multiplier)
-        .ok_or_else(|| anyhow::anyhow!("time is too large"))?;
+        .ok_or_else(|| anyhow::anyhow!("ERR time is too large"))?;
     let current_timestamp = current_unix_timestamp()? as u64;
 
     let duration = time
         .checked_sub(current_timestamp)
-        .ok_or_else(|| anyhow::anyhow!("time is in the past"))?;
+        .ok_or_else(|| anyhow::anyhow!("ERR time is in the past"))?;
 
     let duration = Duration::from_millis(duration);
 
@@ -289,7 +296,7 @@ fn parse_expiry_at(time: &str, multiplier: u64) -> Result<Duration, anyhow::Erro
 fn parse_get(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let key = body
         .first()
-        .ok_or_else(|| anyhow::anyhow!("missing key for GET command"))?
+        .ok_or_else(|| anyhow::anyhow!("ERR missing key for GET command"))?
         .clone();
 
     Ok(Command::Get(key))
@@ -365,10 +372,10 @@ fn parse_wait(body: Vec<String>) -> Result<Command, anyhow::Error> {
 fn parse_config(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let get_cmd = body
         .first()
-        .ok_or_else(|| anyhow::anyhow!("config must specify a command"))?;
+        .ok_or_else(|| anyhow::anyhow!("ERR config must specify a command"))?;
 
     if get_cmd.to_ascii_lowercase() != "get" {
-        anyhow::bail!("only get commands supported for config for now");
+        anyhow::bail!("ERR only get commands supported for config for now");
     }
 
     let get_option = body
@@ -394,7 +401,10 @@ fn parse_keys(body: Vec<String>) -> Result<Command, anyhow::Error> {
         .ok_or_else(|| anyhow::anyhow!("keys must specify a command"))?;
 
     if key_group != "*" {
-        anyhow::bail!("Only * command supported for keys, received {}", key_group)
+        anyhow::bail!(
+            "ERR Only * command supported for keys, received {}",
+            key_group
+        )
     }
 
     let command = Command::Keys(key_group.to_string());
@@ -420,7 +430,7 @@ fn parse_xadd(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let stream_id = get_stream_id(stream_id);
 
     let (ms_time, sequence_number) = match stream_id {
-        None => anyhow::bail!("Stream ID format not recognized"),
+        None => anyhow::bail!("ERR Stream ID format not recognized"),
         Some(stream_id) => stream_id,
     };
 
@@ -532,7 +542,7 @@ fn parse_xread(body: Vec<String>) -> Result<Command, anyhow::Error> {
             let block_amt = body
                 .get(block_idx + 1)
                 .map(|v| str::parse::<u64>(v))
-                .ok_or_else(|| anyhow::anyhow!("Expected block length after block option"))??;
+                .ok_or_else(|| anyhow::anyhow!("ERR Expected block length after block option"))??;
             Some(block_amt)
         }
     };
@@ -557,7 +567,7 @@ fn parse_xread(body: Vec<String>) -> Result<Command, anyhow::Error> {
     }
 
     if num_streams == 0 {
-        anyhow::bail!("Expected at least one stream");
+        anyhow::bail!("ERR Expected at least one stream");
     }
 
     let mut streams: Vec<XReadCommandStream> = Vec::with_capacity(num_streams);
@@ -567,19 +577,19 @@ fn parse_xread(body: Vec<String>) -> Result<Command, anyhow::Error> {
 
         let key = body
             .get(key_index)
-            .ok_or_else(|| anyhow::anyhow!("Unable to read stream key at index {}", key_index))?
+            .ok_or_else(|| anyhow::anyhow!("ERR Unable to read stream key at index {}", key_index))?
             .to_string();
 
         let stream_start = body.get(stream_start_index).ok_or_else(|| {
             anyhow::anyhow!(
-                "Unable to read stream start at index {}",
+                "ERR Unable to read stream start at index {}",
                 stream_start_index
             )
         })?;
 
         let stream_start = if stream_start.len() == 1 && stream_start.starts_with('$') {
             if block.is_none() {
-                anyhow::bail!("$ entry ID can only be used in blocking commands")
+                anyhow::bail!("ERR $ entry ID can only be used in blocking commands")
             }
             XReadNumber::AllNewEntries
         } else {
@@ -618,10 +628,8 @@ fn parse_increment_by(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let increment = body
         .get(1)
         .ok_or_else(|| anyhow::anyhow!("usage incrby <key> <increment>"))?;
-    let increment = str::parse::<i64>(increment).map_err(|e| {
-        anyhow::anyhow!("ERR value is not an integer or out of range")
-            .context(format!("Unable to parse as u64: {}", e))
-    })?;
+    let increment = str::parse::<i64>(increment)
+        .map_err(|e| not_an_integer().context(format!("Unable to parse as u64: {}", e)))?;
 
     Ok(Command::IncrBy(key, increment))
 }
@@ -629,7 +637,7 @@ fn parse_increment_by(body: Vec<String>) -> Result<Command, anyhow::Error> {
 fn parse_increment_by_float(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let key = body
         .first()
-        .ok_or_else(|| anyhow::anyhow!("usage IncrByFloat <key> <increment"))?
+        .ok_or_else(|| anyhow::anyhow!("usage incrbyfloat <key> <increment"))?
         .to_string();
 
     let increment = body
@@ -662,10 +670,8 @@ fn parse_decrement_by(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let decrement = body
         .get(1)
         .ok_or_else(|| anyhow::anyhow!("usage incrby <key> <decrement>"))?;
-    let decrement = str::parse::<i64>(decrement).map_err(|e| {
-        anyhow::anyhow!("ERR value is not an integer or out of range")
-            .context(format!("Unable to parse as u64: {}", e))
-    })?;
+    let decrement = str::parse::<i64>(decrement)
+        .map_err(|e| not_an_integer().context(format!("Unable to parse as u64: {}", e)))?;
 
     Ok(Command::DecrBy(key, decrement))
 }
@@ -692,14 +698,12 @@ fn parse_get_delete(body: Vec<String>) -> Result<Command, anyhow::Error> {
 fn parse_getex(body: Vec<String>) -> Result<Command, anyhow::Error> {
     let mut body_iter = body.iter();
 
+    let getex_instructions = "GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds |
+      PXAT unix-time-milliseconds | PERSIST]";
+
     let key = body_iter
         .next()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "GETEX key [EX seconds | PX milliseconds | EXAT unix-time-seconds |
-      PXAT unix-time-milliseconds | PERSIST]"
-            )
-        })?
+        .ok_or_else(|| anyhow::anyhow!("ERR Missing key: {}", getex_instructions))?
         .to_string();
 
     let mut expires: CommandExpiration = CommandExpiration::None;
@@ -709,28 +713,28 @@ fn parse_getex(body: Vec<String>) -> Result<Command, anyhow::Error> {
             "ex" => {
                 let amount = body_iter
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                    .ok_or_else(|| invalid_expire_time("getex"))?;
                 let duration = parse_expiry(amount, 1000)?;
                 expires = CommandExpiration::Expiry(duration);
             }
             "px" => {
                 let amount = body_iter
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry amount for SET command"))?;
+                    .ok_or_else(|| invalid_expire_time("getex"))?;
                 let duration = parse_expiry(amount, 1)?;
                 expires = CommandExpiration::Expiry(duration);
             }
             "exat" => {
                 let time = body_iter
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                    .ok_or_else(|| invalid_expire_time("getex"))?;
                 let duration = parse_expiry_at(time, 1000)?;
                 expires = CommandExpiration::Expiry(duration);
             }
             "pxat" => {
                 let time = body_iter
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("missing expiry timestamp for SET command"))?;
+                    .ok_or_else(|| invalid_expire_time("getex"))?;
                 let duration = parse_expiry_at(time, 1)?;
                 expires = CommandExpiration::Expiry(duration);
             }
@@ -741,4 +745,8 @@ fn parse_getex(body: Vec<String>) -> Result<Command, anyhow::Error> {
 
     let command = Command::GetEx(key, expires);
     Ok(command)
+}
+
+pub fn invalid_expire_time(command: &str) -> anyhow::Error {
+    anyhow::anyhow!("ERR invalid expire time in '{}' command", command)
 }

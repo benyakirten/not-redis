@@ -18,8 +18,7 @@ async fn echo_fail_if_short() {
 
     let message = encode_string("echo");
     let resp = send_message(&test_app.address.name(), &message).await;
-    // TODO: Fix this when we have proper error handling.
-    assert_eq!(resp, "");
+    assert_eq!(resp, "usage echo message");
 }
 
 #[tokio::test]
@@ -28,6 +27,5 @@ async fn echo_fail_if_long() {
 
     let message = encode_string("echo hello bye");
     let resp = send_message(&test_app.address.name(), &message).await;
-    // TODO: Fix this when we have proper error handling.
-    assert_eq!(resp, "");
+    assert_eq!(resp, "usage echo message");
 }

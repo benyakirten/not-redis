@@ -2,6 +2,7 @@ pub mod app;
 pub mod commands;
 pub mod data;
 pub mod encoding;
+pub mod errors;
 pub mod request;
 pub mod server;
 pub mod stream;
