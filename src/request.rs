@@ -207,7 +207,7 @@ fn parse_set(body: Vec<String>) -> Result<Command, anyhow::Error> {
   EXAT unix-time-seconds | PXAT unix-time-milliseconds | KEEPTTL]";
     let key = body_iter
         .next()
-        .ok_or_else(|| anyhow::anyhow!("Missing Key: {}", set_explanation))?
+        .ok_or_else(|| anyhow::anyhow!("Missing key: {}", set_explanation))?
         .clone();
     let value = body_iter
         .next()

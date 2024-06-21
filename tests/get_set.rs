@@ -33,8 +33,7 @@ async fn set_missing_value() {
     let test_app = TestApp::master().await;
     let message = encode_string("set foo");
     let resp = send_message(&test_app.address.name(), &message).await;
-    // TODO: Fix this when we have proper error handling.
-    assert_eq!(resp, "");
+    assert_eq!(resp, "Missing value: SET key value [NX | XX] [GET] [EX seconds | PX milliseconds |\n  EXAT unix-time-seconds | PXAT unix-time-milliseconds | KEEPTTL]");
 }
 
 #[tokio::test]
@@ -42,8 +41,7 @@ async fn set_missing_key_value() {
     let test_app = TestApp::master().await;
     let message = encode_string("set");
     let resp = send_message(&test_app.address.name(), &message).await;
-    // TODO: Fix this when we have proper error handling.
-    assert_eq!(resp, "");
+    assert_eq!(resp, "Missing key: SET key value [NX | XX] [GET] [EX seconds | PX milliseconds |\n  EXAT unix-time-seconds | PXAT unix-time-milliseconds | KEEPTTL]");
 }
 
 #[tokio::test]
