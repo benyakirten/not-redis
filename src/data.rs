@@ -109,7 +109,7 @@ impl Database {
             Some(DatabaseItem::Stream(_)) => {
                 anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value")
             }
-            Some(DatabaseItem::String(redis_string)) => Some(redis_string.data()),
+            Some(DatabaseItem::String(redis_string)) => Some(redis_string.data.to_string()),
             None => None,
         };
 
@@ -350,8 +350,7 @@ impl Database {
                     Ok(stream_id)
                 }
                 _ => Err(anyhow::anyhow!(
-                    "Item at key {} is not a stream",
-                    &command.stream_key
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
                 )),
             },
         }
@@ -367,7 +366,9 @@ impl Database {
         let stream = match database.get(&key) {
             None => anyhow::bail!("No stream found at {}", key),
             Some(item) => match &item {
-                DatabaseItem::String(_) => anyhow::bail!("No stream found at {}", key),
+                DatabaseItem::String(_) => anyhow::bail!(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value"
+                ),
                 DatabaseItem::Stream(stream) => stream,
             },
         };
@@ -1025,7 +1026,7 @@ fn read_streams_sync(
         let stream = match &item {
             DatabaseItem::Stream(stream) => stream,
             _ => {
-                anyhow::bail!("Item at key {} is not a stream", &command_stream.key);
+                anyhow::bail!("WRONGTYPE Operation against a key holding the wrong kind of value");
             }
         };
 
