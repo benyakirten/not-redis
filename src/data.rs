@@ -122,16 +122,8 @@ impl Database {
         database.get(key).map(|v| v.data_type())
     }
 
-    pub fn set(&self, key: String, value: RedisString) -> Result<(), anyhow::Error> {
+    pub fn set(&self, key: String, mut value: RedisString) -> Result<(), anyhow::Error> {
         let duration = value.duration;
-
-        let database_item = DatabaseItem::String(value);
-
-        let item = self
-            .0
-            .write()
-            .map_err(|e| anyhow::anyhow!("{}", e))?
-            .insert(key.to_string(), database_item);
 
         if let Some(dur) = duration {
             let database = self.clone();
@@ -140,20 +132,15 @@ impl Database {
                 sleep(dur).await;
                 database.remove(&key);
             });
-            if let Some(item) = item {
-                match item {
-                    DatabaseItem::String(mut redis_string) => {
-                        if let Some(process) = &redis_string.cancellation_process {
-                            process.abort();
-                        }
-                        redis_string.set_cancellation(join_handle);
-                    }
-                    _ => {
-                        unreachable!()
-                    }
-                }
-            }
+
+            value.set_cancellation(join_handle);
         };
+
+        let database_item = DatabaseItem::String(value);
+        self.0
+            .write()
+            .map_err(|e| anyhow::anyhow!("{}", e))?
+            .insert(key.to_string(), database_item);
 
         Ok(())
     }
