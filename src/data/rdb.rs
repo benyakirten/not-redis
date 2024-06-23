@@ -107,8 +107,19 @@ pub fn read_from_file(
     mut cursor: Cursor<Vec<u8>>,
 ) -> Result<Database, anyhow::Error> {
     read_magic_string(&mut cursor)?;
-    let _version_number = read_version_number(&mut cursor)?;
+    let version_number = read_version_number(&mut cursor)?;
 
+    let database = match version_number {
+        _ => create_database_from_version_x(database, cursor),
+    }?;
+
+    Ok(database)
+}
+
+fn create_database_from_version_x(
+    database: Database,
+    mut cursor: Cursor<Vec<u8>>,
+) -> Result<Database, anyhow::Error> {
     loop {
         let op_code = utils::read_next_byte(&mut cursor)?;
         match OpCode::from_byte(op_code) {
