@@ -6,7 +6,6 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::Context;
-use rdb::read_from_file;
 use tokio::spawn;
 use tokio::sync::broadcast::{Receiver, Sender};
 use tokio::task::JoinHandle;
@@ -18,21 +17,30 @@ use crate::request::{self, CommandExpiration, SetOverride};
 use crate::utils::current_unix_timestamp;
 use crate::{encoding, transmission};
 
-mod rdb;
+mod read;
+use read::read_from_file;
 
 pub struct Database(Arc<RwLock<HashMap<String, DatabaseItem>>>);
 
 impl Default for Database {
     fn default() -> Self {
-        Self::new()
+        Self(Arc::new(RwLock::new(HashMap::new())))
     }
 }
 
 impl Database {
     pub fn new() -> Self {
-        // If we persist data to a database, we can fetch the data on initialization
-        // Create a process that runs every so often to store hashmap data in a more permanent database
-        Self(Arc::new(RwLock::new(HashMap::new())))
+        Database::default()
+    }
+
+    pub fn from_config(path: PathBuf) -> Result<Self, anyhow::Error> {
+        let database = Database::new();
+        if !path.exists() {
+            return Ok(database);
+        }
+
+        let contents = read(path).context("Reading RDB file")?;
+        read_from_file(database, Cursor::new(contents))
     }
 
     pub fn get(&self, key: &str) -> Result<Option<String>, anyhow::Error> {
@@ -46,16 +54,6 @@ impl Database {
         };
 
         Ok(data)
-    }
-
-    pub fn from_config(path: PathBuf) -> Result<Self, anyhow::Error> {
-        let database = Database::new();
-        if !path.exists() {
-            return Ok(database);
-        }
-
-        let contents = read(path).context("Reading RDB file")?;
-        read_from_file(database, Cursor::new(contents))
     }
 
     pub fn get_type(&self, key: &str) -> Option<String> {
