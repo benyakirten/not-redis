@@ -89,14 +89,16 @@ fn read_magic_string(cursor: &mut Cursor<Vec<u8>>) -> Result<String, anyhow::Err
     Ok(magic_string)
 }
 
-fn read_version_number(cursor: &mut Cursor<Vec<u8>>) -> Result<u32, anyhow::Error> {
+fn read_version_number(cursor: &mut Cursor<Vec<u8>>) -> Result<u16, anyhow::Error> {
     let mut version_number: [u8; 4] = [0; 4];
     cursor
         .read_exact(&mut version_number)
         .context("Reading version number")?;
     let version_number =
         String::from_utf8(version_number.to_vec()).context("Parsing verison number into utf8")?;
-    let version_number = str::parse::<u32>(&version_number)
+
+    // Version number can only go up to 9999.
+    let version_number = str::parse::<u16>(&version_number)
         .context("Version number cannot be parsed as an integer")?;
 
     Ok(version_number)
